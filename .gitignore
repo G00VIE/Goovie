@@ -1,0 +1,12 @@
+# Binaries
+goovie
+/build/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go
+/vendor/
