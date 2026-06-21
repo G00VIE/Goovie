@@ -22,11 +22,16 @@ Before running Goovie, ensure you have the following installed on your system:
 ## Installation
 
 ### Option 1: Download Pre-compiled Binaries
-You can find pre-compiled binaries in the `build/` directory of this project or on the GitHub Releases page.
+You can find pre-compiled binaries on the [GitHub Releases](https://github.com/G00VIE/Goovie/releases) page.
 - Windows: `goovie-windows-amd64.exe`
 - Linux: `goovie-linux-amd64`
 - macOS (Intel): `goovie-darwin-amd64`
 - macOS (Apple Silicon): `goovie-darwin-arm64`
+
+**Note for Linux/macOS users:** After downloading, you will need to make the binary executable before you can run it:
+```bash
+chmod +x goovie-*
+```
 
 ### Option 2: Build from Source
 If you have Go installed (1.20+), you can easily build it yourself:
