@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logos/goovie-logo.png" alt="Goovie Logo" width="600">
+  <img src="internal/assets/logos/goovie-logo.png" alt="Goovie Logo" width="600">
 </p>
 
 # Goovie
