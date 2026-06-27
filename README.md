@@ -82,7 +82,6 @@ For a deeper dive into the codebase and project structure, see [ARCHITECTURE.md]
 Goovie was built with and inspired by the following incredible open-source projects:
 
 - [ani-cli](https://github.com/pystardust/ani-cli) - The original inspiration that sparked the idea to build this tool.
-- [bubble-stream](https://github.com/talnz/bubble-stream) - The original proof of concept and TUI core this project evolved from.
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) - The powerful, elegant TUI framework used to build the interface.
 - [WebTorrent](https://github.com/webtorrent/webtorrent-cli) - The streaming torrent client that makes instant playback possible.
 - [MPV](https://github.com/mpv-player/mpv) - The robust command-line video player used for rendering the media.
