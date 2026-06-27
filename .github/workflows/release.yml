@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch: # 👈 ADD THIS EXACT LINE
 
 permissions:
   contents: write
