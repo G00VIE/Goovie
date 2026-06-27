@@ -1,41 +1,64 @@
 package prowlarr
 
-import "fmt"
-
-// Indexer represents a Prowlarr indexer from the API.
-type Indexer struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Enable bool   `json:"enable"`
-}
-
-// TorrentResult holds a single parsed search result.
-type TorrentResult struct {
-	TorrentName string
-	Size        int64
-	Seeders     int
-	MagnetURL   string
-	Indexer     string
-}
-
-// Title implements the list.Item interface for bubbletea.
-func (t TorrentResult) Title() string { return t.TorrentName }
-
-// Description implements the list.Item interface for bubbletea.
-func (t TorrentResult) Description() string {
-	sizeGB := float64(t.Size) / (1024 * 1024 * 1024)
-	return fmt.Sprintf("Seeders: %d | Size: %.2f GB | [%s]", t.Seeders, sizeGB, t.Indexer)
-}
-
-// FilterValue implements the list.Item interface for bubbletea.
-func (t TorrentResult) FilterValue() string { return t.TorrentName }
-
-// searchResult is the raw JSON shape returned by the Prowlarr search API.
-type searchResult struct {
+type ProwlarrResult struct {
 	Title       string `json:"title"`
-	Size        int64  `json:"size"`
+	MagnetUri   string `json:"magnetUrl"`
+	InfoHash    string `json:"infoHash"`
 	Seeders     int    `json:"seeders"`
-	MagnetURL   string `json:"magnetUrl"`
-	DownloadURL string `json:"downloadUrl"`
+	Peers       int    `json:"peers"`
+	Size        int64  `json:"size"`
 	Indexer     string `json:"indexer"`
+	DownloadUrl string `json:"downloadUrl"`
+}
+
+type Indexer struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+type IndexerGroup struct {
+	ID      int
+	Name    string
+	Status  string
+	Results []ProwlarrResult
+	Order   int
+}
+
+// --- Western Models ---
+type TVMazeShow struct {
+	ID        int    `json:"id"`
+	Name      string `json:"name"`
+	Premiered string `json:"premiered"`
+}
+
+type TVMazeSearchResult struct {
+	Show TVMazeShow `json:"show"`
+}
+
+type TVMazeSeason struct {
+	ID     int `json:"id"`
+	Number int `json:"number"`
+}
+
+type CinemetaMovie struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Year string `json:"year"`
+}
+
+type CinemetaCatalog struct {
+	Metas []CinemetaMovie `json:"metas"`
+}
+
+// --- Anime Models ---
+type JikanAnime struct {
+	MalID    int    `json:"mal_id"`
+	Title    string `json:"title"`
+	Type     string `json:"type"`
+	Year     int    `json:"year"`
+	Episodes int    `json:"episodes"`
+}
+
+type JikanResponse struct {
+	Data []JikanAnime `json:"data"`
 }

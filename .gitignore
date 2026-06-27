@@ -1,6 +1,10 @@
-# Binaries
+# Binaries and executables
 /goovie
 /build/
+*.exe
+
+# Go monolith backup
+goovie.go
 
 # IDEs and editors
 .idea/

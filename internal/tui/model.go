@@ -1,65 +1,98 @@
 package tui
 
 import (
-	"bubble-stream/internal/prowlarr"
+	"image"
 
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/spinner"
+	"bubble-stream/internal/player"
+	"bubble-stream/internal/prowlarr"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
-
-// sessionState tracks which screen the TUI is currently showing.
-type sessionState int
 
 const (
-	StateSearchInput sessionState = iota
+	StateFrontPage       = iota
+	StateModeSelect
+	StateAnimeTypeSelect
+	StateSearch
 	StateLoading
+	StateMovieSelect
+	StateTVShowSelect
+	StateTVSeasonSelect
+	StateQuality
 	StateList
+	StateTVFileSelect
+	StateAnimeSelect
+	StateAnikotoShowSelect
+	StateAnikotoEpSelect
+	StateAnikotoModeSelect
+	StateAnikotoServerSelect
 )
 
-// Model is the top-level bubbletea model for the application.
+type renderRow struct {
+	text     string
+	isTarget bool
+}
+
 type Model struct {
-	State           sessionState
-	TextInput       textinput.Model
-	List            list.Model
-	Spinner         spinner.Model
-	Err             error
-	StreamURL       string
-	AllResults      []prowlarr.TorrentResult
-	PendingIndexers int
-	Client          *prowlarr.Client
+	state           int
+	terminalHeight  int
+	terminalWidth   int
+	err             error
+	isTVShow        bool
+	isAnime         bool
+	textInput       textinput.Model
+	currentQuery    string
+	cursor          int
+	animeTypeFilter string
+	imgMovies       image.Image
+	imgTVShows      image.Image
+	imgAnime        image.Image
+
+	cinemetaMovies []prowlarr.CinemetaMovie
+	tvShows        []prowlarr.TVMazeShow
+	tvSeasons      []prowlarr.TVMazeSeason
+	tvFiles        []string
+	selectedShow   string
+	selectedSeason int
+	selectedMagnet string
+	groups         []prowlarr.IndexerGroup
+	totalMovies    int
+	qualityFilter  string
+	pendingSearch  int
+	finishCounter  int
+
+	animeList         []prowlarr.JikanAnime
+	anikotoShows      []player.ShowResult
+	anikotoEpisodes   []player.EpisodeResult
+	anikotoServers    []player.ServerResult
+	anikotoWatchURL   string
+	anikotoSelectedEp player.EpisodeResult
+	anikotoMode       string
+
+	cachedTitle      string
+	cachedFrontTitle string
+	cacheMovies      map[int]map[bool]string
+	cacheTV          map[int]map[bool]string
+	cacheAnime       map[int]map[bool]string
+	activeWCell      int
 }
 
-// NewModel creates and returns the initial TUI model.
-func NewModel(client *prowlarr.Client) Model {
-	ti := textinput.New()
-	ti.Placeholder = "Enter Movie or Show (e.g., Breaking Bad S01E01)..."
-	ti.Focus()
-	ti.CharLimit = 156
-	ti.Width = 50
+func (m Model) Init() tea.Cmd { return textinput.Blink }
 
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-
-	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	l.Title = "Prowlarr Results"
-	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(false)
-
+// NewModel handles creation with existing state. It will be initialized from main.go
+func NewModel(ti textinput.Model, imgMovies image.Image, imgTVShows image.Image, imgAnime image.Image, cachedTitle string, cachedFrontTitle string, cacheMovies map[int]map[bool]string, cacheTV map[int]map[bool]string, cacheAnime map[int]map[bool]string) Model {
 	return Model{
-		State:      StateSearchInput,
-		TextInput:  ti,
-		List:       l,
-		Spinner:    sp,
-		AllResults: []prowlarr.TorrentResult{},
-		Client:     client,
+		state:            StateFrontPage,
+		cursor:           1, // Default to TV SHOWS
+		textInput:        ti,
+		imgMovies:        imgMovies,
+		imgTVShows:       imgTVShows,
+		imgAnime:         imgAnime,
+		cachedTitle:      cachedTitle,
+		cachedFrontTitle: cachedFrontTitle,
+		cacheMovies:      cacheMovies,
+		cacheTV:          cacheTV,
+		cacheAnime:       cacheAnime,
+		activeWCell:      50,
 	}
-}
-
-// Init implements tea.Model.
-func (m Model) Init() tea.Cmd {
-	return textinput.Blink
 }
