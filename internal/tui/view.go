@@ -232,6 +232,26 @@ func (m Model) View() string {
 	}
 
 	switch m.state {
+	case StateCheckingAPIKey:
+		width := m.terminalWidth
+		if width == 0 {
+			width = 80
+		}
+		msg := lipgloss.NewStyle().Align(lipgloss.Center).Foreground(lipgloss.Color("99")).Render("Reading Prowlarr configuration...")
+		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, msg)
+
+	case StateSetupAPIKey:
+		width := m.terminalWidth
+		if width == 0 {
+			width = 80
+		}
+		title := lipgloss.NewStyle().Align(lipgloss.Center).Foreground(lipgloss.Color("99")).Bold(true).Render("Prowlarr API Key Not Found")
+		subtitle := lipgloss.NewStyle().Align(lipgloss.Center).Render("Please enter your Prowlarr API Key to continue:")
+		inputView := lipgloss.NewStyle().Align(lipgloss.Center).Render(m.setupInput.View())
+		
+		finalUI := lipgloss.JoinVertical(lipgloss.Center, title, "\n", subtitle, "\n", inputView, "\n", "[Enter] to continue • [Esc] to quit")
+		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, finalUI)
+
 	case StateFrontPage:
 		width := m.terminalWidth
 		if width == 0 {

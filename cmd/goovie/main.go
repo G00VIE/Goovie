@@ -63,7 +63,11 @@ func main() {
 	cacheTV := tui.PreRenderCache(imgTVShows, commonWidths)
 	cacheAnime := tui.PreRenderCache(imgAnime, commonWidths)
 
-	m := tui.NewModel(ti, imgMovies, imgTVShows, imgAnime, cachedTitle, cachedFrontTitle, cacheMovies, cacheTV, cacheAnime)
+	setupTi := textinput.New()
+	setupTi.Placeholder = "Paste API Key here..."
+
+	m := tui.NewModel(ti, setupTi, imgMovies, imgTVShows, imgAnime, cachedTitle, cachedFrontTitle, cacheMovies, cacheTV, cacheAnime)
+
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {

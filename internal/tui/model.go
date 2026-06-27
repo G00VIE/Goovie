@@ -3,6 +3,7 @@ package tui
 import (
 	"image"
 
+	"bubble-stream/internal/config"
 	"bubble-stream/internal/player"
 	"bubble-stream/internal/prowlarr"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -26,7 +27,13 @@ const (
 	StateAnikotoEpSelect
 	StateAnikotoModeSelect
 	StateAnikotoServerSelect
+	StateCheckingAPIKey
+	StateSetupAPIKey
 )
+
+type APIKeyStatusMsg struct {
+	Found bool
+}
 
 type renderRow struct {
 	text     string
@@ -69,6 +76,8 @@ type Model struct {
 	anikotoSelectedEp player.EpisodeResult
 	anikotoMode       string
 
+	setupInput textinput.Model
+
 	cachedTitle      string
 	cachedFrontTitle string
 	cacheMovies      map[int]map[bool]string
@@ -77,14 +86,24 @@ type Model struct {
 	activeWCell      int
 }
 
-func (m Model) Init() tea.Cmd { return textinput.Blink }
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(textinput.Blink, checkAPIKeyCmd())
+}
+
+func checkAPIKeyCmd() tea.Cmd {
+	return func() tea.Msg {
+		found := config.InitConfig()
+		return APIKeyStatusMsg{Found: found}
+	}
+}
 
 // NewModel handles creation with existing state. It will be initialized from main.go
-func NewModel(ti textinput.Model, imgMovies image.Image, imgTVShows image.Image, imgAnime image.Image, cachedTitle string, cachedFrontTitle string, cacheMovies map[int]map[bool]string, cacheTV map[int]map[bool]string, cacheAnime map[int]map[bool]string) Model {
+func NewModel(ti textinput.Model, setupInput textinput.Model, imgMovies image.Image, imgTVShows image.Image, imgAnime image.Image, cachedTitle string, cachedFrontTitle string, cacheMovies map[int]map[bool]string, cacheTV map[int]map[bool]string, cacheAnime map[int]map[bool]string) Model {
 	return Model{
-		state:            StateFrontPage,
+		state:            StateCheckingAPIKey,
 		cursor:           1, // Default to TV SHOWS
 		textInput:        ti,
+		setupInput:       setupInput,
 		imgMovies:        imgMovies,
 		imgTVShows:       imgTVShows,
 		imgAnime:         imgAnime,

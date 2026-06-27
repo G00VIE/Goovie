@@ -8,6 +8,7 @@ import (
 	"bubble-stream/internal/config"
 	"bubble-stream/internal/player"
 	"bubble-stream/internal/prowlarr"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -19,6 +20,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case APIKeyStatusMsg:
+		if msg.Found {
+			m.state = StateFrontPage
+			return m, nil
+		}
+		m.state = StateSetupAPIKey
+		m.setupInput.Focus()
+		return m, textinput.Blink
+
 	case tea.WindowSizeMsg:
 		m.terminalHeight = msg.Height
 		m.terminalWidth = msg.Width
@@ -115,6 +125,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			switch m.state {
+			case StateSetupAPIKey:
+				key := strings.TrimSpace(m.setupInput.Value())
+				if key != "" {
+					config.SaveConfig(key)
+					m.state = StateFrontPage
+				}
+				return m, nil
+
 			case StateFrontPage:
 				m.state = StateModeSelect
 				return m, nil
@@ -408,6 +426,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	if m.state == StateSearch {
 		m.textInput, cmd = m.textInput.Update(msg)
+	} else if m.state == StateSetupAPIKey {
+		m.setupInput, cmd = m.setupInput.Update(msg)
 	}
 	return m, cmd
 }
