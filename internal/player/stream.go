@@ -13,11 +13,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"bubble-stream/internal/config"
 	"bubble-stream/internal/prowlarr"
+	"bubble-stream/internal/sysutil"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -263,7 +263,7 @@ func LaunchPlayer(target string, fileIndex string, referer string) tea.Cmd {
 			} else {
 				rawCmd = fmt.Sprintf(`cmd /c webtorrent.cmd "%s" --mpv`, target)
 			}
-			c.SysProcAttr = &syscall.SysProcAttr{CmdLine: rawCmd}
+			sysutil.SetCmdLine(c, rawCmd)
 		} else {
 			if fileIndex != "" {
 				c = exec.Command("webtorrent", target, "--select", fileIndex, "--mpv")

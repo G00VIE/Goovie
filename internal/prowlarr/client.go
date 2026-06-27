@@ -10,10 +10,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"bubble-stream/internal/config"
+	"bubble-stream/internal/sysutil"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -157,7 +157,7 @@ func FetchTVFiles(magnet string) tea.Cmd {
 		if runtime.GOOS == "windows" {
 			cmd = exec.Command("cmd")
 			rawCmd := fmt.Sprintf(`cmd /c webtorrent.cmd "%s" --select`, magnet)
-			cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: rawCmd}
+			sysutil.SetCmdLine(cmd, rawCmd)
 		} else {
 			cmd = exec.Command("webtorrent", magnet, "--select")
 		}
