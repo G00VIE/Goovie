@@ -104,6 +104,14 @@ func AutoDetectAPIKey() bool {
 }
 
 func InitConfig() bool {
+	if envURL := os.Getenv("PROWLARR_URL"); envURL != "" {
+		ProwlarrURL = envURL
+	}
+	if envKey := os.Getenv("PROWLARR_API_KEY"); envKey != "" {
+		ProwlarrAPIKey = envKey
+		return true
+	}
+
 	if LoadConfig() {
 		return true
 	}

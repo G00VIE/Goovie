@@ -43,7 +43,12 @@ go build -o goovie ./cmd/goovie/
 
 ## Configuration & Usage
 
-Goovie requires access to your Prowlarr instance. You must provide your API key via environment variables.
+Goovie requires access to your Prowlarr instance. You can configure it in three ways:
+1. **Environment Variables** (Highest priority, useful for remote instances)
+2. **Auto-Detection** (Goovie will automatically find your local Prowlarr `config.xml`)
+3. **In-App Prompt** (If not found, Goovie will ask for your API key in the terminal)
+
+### Using Environment Variables
 
 ### Linux / macOS
 ```bash
