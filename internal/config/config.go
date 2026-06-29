@@ -21,8 +21,8 @@ var (
 		"udp://tracker.torrent.eu.org:451/announce",
 	}
 
-	QualityOptions   = []string{"All", "720p", "1080p", "4K"}
-	AnimeTypeOptions = []string{"All", "TV", "Movie", "OVA", "Special"}
+	QualityOptions   = []string{"720p", "1080p", "4K"}
+	AnimeTypeOptions = []string{"All", "Series", "Movies", "OVA", "Special"}
 )
 
 type AppConfig struct {

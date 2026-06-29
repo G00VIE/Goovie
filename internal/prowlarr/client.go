@@ -3,9 +3,12 @@ package prowlarr
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -77,6 +80,22 @@ func FetchTVSeasons(showID int) tea.Cmd {
 		var seasons []TVMazeSeason
 		json.NewDecoder(resp.Body).Decode(&seasons)
 		return TvSeasonsMsg(seasons)
+	}
+}
+
+type TvEpisodesMsg []TVMazeEpisode
+
+func FetchTVEpisodes(seasonID int) tea.Cmd {
+	return func() tea.Msg {
+		targetUrl := fmt.Sprintf("https://api.tvmaze.com/seasons/%d/episodes", seasonID)
+		resp, err := http.Get(targetUrl)
+		if err != nil || resp.StatusCode != 200 {
+			return ErrMsg{fmt.Errorf("TVMaze API episode lookup failed")}
+		}
+		defer resp.Body.Close()
+		var episodes []TVMazeEpisode
+		json.NewDecoder(resp.Body).Decode(&episodes)
+		return TvEpisodesMsg(episodes)
 	}
 }
 
@@ -170,6 +189,10 @@ func FetchTVFiles(magnet string) tea.Cmd {
 			line = strings.TrimSpace(line)
 			if len(line) > 0 && line[0] >= '0' && line[0] <= '9' {
 				if !strings.HasPrefix(line, "To select") && !strings.Contains(line, "Example:") {
+					lowerLine := strings.ToLower(line)
+					if strings.Contains(lowerLine, ".txt") || strings.Contains(lowerLine, ".jpg") || strings.Contains(lowerLine, ".png") || strings.Contains(lowerLine, ".srt") || strings.Contains(lowerLine, ".nfo") || strings.Contains(lowerLine, ".url") || strings.Contains(lowerLine, ".exe") {
+						continue
+					}
 					files = append(files, line)
 				}
 			}
@@ -187,7 +210,13 @@ func FetchAnime(query string, animeType string) tea.Cmd {
 		targetUrl := fmt.Sprintf("https://api.jikan.moe/v4/anime?q=%s&sfw=true", safeQuery)
 
 		if animeType != "All" && animeType != "" {
-			targetUrl += fmt.Sprintf("&type=%s", strings.ToLower(animeType))
+			apiType := strings.ToLower(animeType)
+			if apiType == "series" {
+				apiType = "tv"
+			} else if apiType == "movies" {
+				apiType = "movie"
+			}
+			targetUrl += fmt.Sprintf("&type=%s", apiType)
 		}
 
 		resp, err := http.Get(targetUrl)
@@ -203,19 +232,77 @@ func FetchAnime(query string, animeType string) tea.Cmd {
 	}
 }
 
-func ResolveProxyLink(res ProwlarrResult) string {
+func ResolveProxyLink(res ProwlarrResult, isAnime bool) string {
 	var base string
+	var debugLog string
+	
+	debugLog += fmt.Sprintf("=== Resolving Torrent ===\n")
+	debugLog += fmt.Sprintf("Title: %s\n", res.Title)
+	debugLog += fmt.Sprintf("Indexer: %s\n", res.Indexer)
+	debugLog += fmt.Sprintf("InfoHash: %s\n", res.InfoHash)
+	debugLog += fmt.Sprintf("MagnetUri: %s\n", res.MagnetUri)
+	debugLog += fmt.Sprintf("DownloadUrl: %s\n", res.DownloadUrl)
+
 	if res.InfoHash != "" {
 		hash := strings.ToLower(strings.TrimSpace(res.InfoHash))
 		if len(hash) == 40 {
 			dn := url.QueryEscape(res.Title)
 			base = fmt.Sprintf("magnet:?xt=urn:btih:%s&dn=%s", hash, dn)
+			debugLog += fmt.Sprintf("-> Extracted magnet from InfoHash\n")
 		}
 	}
-	if base == "" && res.MagnetUri != "" && strings.HasPrefix(res.MagnetUri, "magnet:") {
-		base = res.MagnetUri
+	if base == "" {
+		if res.MagnetUri != "" && strings.HasPrefix(res.MagnetUri, "magnet:") {
+			base = res.MagnetUri
+			debugLog += fmt.Sprintf("-> Used MagnetUri\n")
+		} else if res.DownloadUrl != "" {
+			if strings.HasPrefix(res.DownloadUrl, "magnet:") {
+				base = res.DownloadUrl
+				debugLog += fmt.Sprintf("-> Used DownloadUrl (magnet)\n")
+			} else {
+				if isAnime {
+					debugLog += fmt.Sprintf("-> Returning DownloadUrl (raw HTTP). Attempting to download locally...\n")
+					localPath, err := downloadTorrentFile(res.DownloadUrl)
+					if err != nil {
+						debugLog += fmt.Sprintf("-> Failed to download locally: %v\n\n", err)
+						writeDebugLog(debugLog)
+						return ""
+					}
+					debugLog += fmt.Sprintf("-> Successfully downloaded to: %s\n\n", localPath)
+					writeDebugLog(debugLog)
+					return localPath
+				} else {
+					debugLog += fmt.Sprintf("-> Resolving HTTP redirect for magnet (Movie/TV Show)\n")
+					client := &http.Client{
+						CheckRedirect: func(req *http.Request, via []*http.Request) error {
+							return http.ErrUseLastResponse
+						},
+						Timeout: 5 * time.Second,
+					}
+					resp, err := client.Get(res.DownloadUrl)
+					if err == nil {
+						defer resp.Body.Close()
+						if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+							loc := resp.Header.Get("Location")
+							if strings.HasPrefix(loc, "magnet:") {
+								base = loc
+								debugLog += fmt.Sprintf("-> Successfully extracted magnet from redirect Location\n")
+							} else {
+								debugLog += fmt.Sprintf("-> Redirect Location is not a magnet link\n")
+							}
+						} else {
+							debugLog += fmt.Sprintf("-> Did not receive a redirect status code (Got %d)\n", resp.StatusCode)
+						}
+					} else {
+						debugLog += fmt.Sprintf("-> Error during HTTP GET: %v\n", err)
+					}
+				}
+			}
+		}
 	}
 	if base == "" || !strings.HasPrefix(base, "magnet:") {
+		debugLog += fmt.Sprintf("-> FAILED: base is empty or not a magnet link\n\n")
+		writeDebugLog(debugLog)
 		return ""
 	}
 	for _, tr := range config.DefaultTrackers {
@@ -224,5 +311,38 @@ func ResolveProxyLink(res ProwlarrResult) string {
 			base += "&tr=" + encodedTr
 		}
 	}
+	debugLog += fmt.Sprintf("-> FINAL URI: %s\n\n", base)
+	writeDebugLog(debugLog)
 	return base
 }
+
+func writeDebugLog(content string) {
+	f, err := os.OpenFile("torrent_debug.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		defer f.Close()
+		f.WriteString(content)
+	}
+}
+
+func downloadTorrentFile(dlUrl string) (string, error) {
+	resp, err := http.Get(dlUrl)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("bad status: %d", resp.StatusCode)
+	}
+
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("goovie_%d.torrent", time.Now().UnixNano()))
+	out, err := os.Create(tmpFile)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, resp.Body)
+	return tmpFile, err
+}
+

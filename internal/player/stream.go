@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"bubble-stream/internal/config"
-	"bubble-stream/internal/prowlarr"
 	"bubble-stream/internal/sysutil"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -36,6 +35,10 @@ type VibeProxy struct {
 	BaseURL  string
 	Sessions map[string]*VibeSession
 	Mu       sync.Mutex
+}
+
+type PlayerFinishedMsg struct {
+	Err error
 }
 
 func InitProxy() {
@@ -273,10 +276,11 @@ func LaunchPlayer(target string, fileIndex string, referer string) tea.Cmd {
 		}
 	}
 
-	return tea.ExecProcess(c, func(err error) tea.Msg {
-		if err != nil {
-			return prowlarr.ErrMsg{Err: fmt.Errorf("player execution failed: %v", err)}
-		}
-		return nil
-	})
+	c.Stdout = io.Discard
+	c.Stderr = io.Discard
+
+	return func() tea.Msg {
+		err := c.Run()
+		return PlayerFinishedMsg{Err: err}
+	}
 }

@@ -40,10 +40,17 @@ type TVMazeSeason struct {
 	Number int `json:"number"`
 }
 
+type TVMazeEpisode struct {
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Number int    `json:"number"`
+}
+
 type CinemetaMovie struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Year string `json:"year"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Year        string `json:"year"`
+	ReleaseInfo string `json:"releaseInfo"`
 }
 
 type CinemetaCatalog struct {

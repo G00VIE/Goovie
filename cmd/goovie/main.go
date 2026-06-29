@@ -9,8 +9,10 @@ import (
 	"bubble-stream/internal/player"
 	"bubble-stream/internal/tui"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/common-nighthawk/go-figure"
 )
 
@@ -66,7 +68,11 @@ func main() {
 	setupTi := textinput.New()
 	setupTi.Placeholder = "Paste API Key here..."
 
-	m := tui.NewModel(ti, setupTi, imgMovies, imgTVShows, imgAnime, cachedTitle, cachedFrontTitle, cacheMovies, cacheTV, cacheAnime)
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
+
+	m := tui.NewModel(ti, setupTi, s, imgMovies, imgTVShows, imgAnime, cachedTitle, cachedFrontTitle, cacheMovies, cacheTV, cacheAnime)
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 

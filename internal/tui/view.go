@@ -35,6 +35,87 @@ func LoadPNG(filename string) (image.Image, error) {
 	return nil, err
 }
 
+func renderDatabaseMatchCamera(title string, items [][2]string, cursor int, searchStr string) string {
+	maxNameLen := 0
+	for _, item := range items {
+		l := len([]rune(item[0]))
+		if l > maxNameLen {
+			maxNameLen = l
+		}
+	}
+	if maxNameLen > 45 {
+		maxNameLen = 45
+	}
+	if maxNameLen < 20 {
+		maxNameLen = 20
+	}
+	// Add more space between name and release year divider
+	maxNameLen += 10
+
+	rawTitle := strings.ToUpper(title) + ":"
+	if searchStr != "" {
+		rawTitle += " " + searchStr
+	}
+	spacedTitle := strings.Join(strings.Split(rawTitle, ""), " ")
+	spacedTitle += " \033[5m_\033[0m"
+
+	visibleTitleLen := len([]rune(strings.Join(strings.Split(rawTitle, ""), " "))) + 2
+
+	innerWidth := 8 + maxNameLen
+	if innerWidth < visibleTitleLen+2 {
+		innerWidth = visibleTitleLen + 2
+		maxNameLen = innerWidth - 8
+	}
+
+	leftTitlePad := innerWidth - visibleTitleLen
+	paddedTitle := " " + spacedTitle + strings.Repeat(" ", leftTitlePad-1)
+
+	rightStrPlain := fmt.Sprintf("  %d / %d  ", cursor+1, len(items))
+	rightWidth := len(rightStrPlain)
+
+	topBorder := "    ┌" + strings.Repeat("─", innerWidth) + "┬" + strings.Repeat("─", rightWidth) + "┐"
+	headerText := fmt.Sprintf("    │%s│%s│", paddedTitle, rightStrPlain)
+	bottomBorder := "    └" + strings.Repeat("─", innerWidth) + "┴" + strings.Repeat("─", rightWidth) + "┘"
+
+	s := fmt.Sprintf("\n%s\n%s\n%s\n\n", topBorder, headerText, bottomBorder)
+
+	const maxLocalItems = 10
+	start := cursor - (maxLocalItems / 2)
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxLocalItems
+	if end > len(items) {
+		end = len(items)
+		start = end - maxLocalItems
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	for i := start; i < end; i++ {
+		isTarget := (i == cursor)
+		name := items[i][0]
+		details := items[i][1]
+
+		if len([]rune(name)) > maxNameLen {
+			name = string([]rune(name)[:maxNameLen-3]) + "..."
+		} else {
+			namePad := maxNameLen - len([]rune(name))
+			name += strings.Repeat(" ", namePad)
+		}
+		
+		displayRow := fmt.Sprintf("%2d  %s   │   %s", i+1, name, details)
+
+		if isTarget {
+			s += fmt.Sprintf("  \033[30;47m  \033[5m●\033[0;30;47m %s  \033[0m\n", displayRow)
+		} else {
+			s += fmt.Sprintf("      %s\n", displayRow)
+		}
+	}
+	return s
+}
+
 var brailleMatrix = [4][2]int{
 	{0x01, 0x08},
 	{0x02, 0x10},
@@ -252,6 +333,17 @@ func (m Model) View() string {
 		finalUI := lipgloss.JoinVertical(lipgloss.Center, title, "\n", subtitle, "\n", inputView, "\n", "[Enter] to continue • [Esc] to quit")
 		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, finalUI)
 
+	case StateLoadingTorrent:
+		width := m.terminalWidth
+		if width == 0 {
+			width = 80
+		}
+		spinnerView := m.loadingSpinner.View()
+		loadingText := lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Render(" Loading chunk...")
+		
+		finalUI := lipgloss.JoinHorizontal(lipgloss.Center, spinnerView, loadingText)
+		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, finalUI)
+
 	case StateFrontPage:
 		width := m.terminalWidth
 		if width == 0 {
@@ -320,76 +412,251 @@ func (m Model) View() string {
 
 		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, finalUI)
 	case StateAnimeTypeSelect:
-		return renderMenuCamera(config.AnimeTypeOptions, m.cursor, termHeight, "🗡️ Anime Pipeline: Select Sub-Type Filter:")
-	case StateSearch:
-		modeStr := "Movie"
-		if m.isTVShow {
-			modeStr = "TV Show"
-		} else if m.isAnime {
-			modeStr = "Anime"
+		rawName := "SELECT MEDIA TYPE"
+		spacedName := strings.Join(strings.Split(rawName, ""), " ")
+		
+		contentLen := len([]rune(spacedName))
+		boxWidth := contentLen + 4
+		if boxWidth < 36 {
+			boxWidth = 36
 		}
-		return fmt.Sprintf("\n  🍿 GOOVIE CLI v25.0\n\n  Enter %s Title: \n  %s\n", modeStr, m.textInput.View())
+		padAmt := boxWidth - contentLen
+		leftPad := padAmt / 2
+		rightPad := padAmt - leftPad
+		
+		paddedName := strings.Repeat(" ", leftPad) + spacedName + strings.Repeat(" ", rightPad)
+		
+		topBorder := "    ┌" + strings.Repeat("─", boxWidth) + "┐"
+		headerText := fmt.Sprintf("    │%s│   %d/%d", paddedName, m.cursor+1, len(config.AnimeTypeOptions))
+		bottomBorder := "    └" + strings.Repeat("─", boxWidth) + "┘"
+		
+		boxBlock := fmt.Sprintf("\n%s\n%s\n%s\n\n\n", topBorder, headerText, bottomBorder)
+		
+		var optsUI string
+		for i, opt := range config.AnimeTypeOptions {
+			if i == m.cursor {
+				optsUI += fmt.Sprintf("      \033[47;30m • %s \033[0m\n", opt)
+			} else {
+				optsUI += fmt.Sprintf("         %s \n", opt)
+			}
+		}
+		return boxBlock + optsUI
+	case StateSearch:
+		modeStr := "MOVIE"
+		if m.isTVShow {
+			modeStr = "TV SHOW"
+		} else if m.isAnime {
+			modeStr = "ANIME"
+		}
+
+		rawName := fmt.Sprintf("ENTER %s TITLE", modeStr)
+		spacedName := strings.Join(strings.Split(rawName, ""), " ")
+		
+		contentLen := len([]rune(spacedName))
+		boxWidth := contentLen + 4
+		if boxWidth < 36 {
+			boxWidth = 36
+		}
+		padAmt := boxWidth - contentLen
+		leftPad := padAmt / 2
+		rightPad := padAmt - leftPad
+		
+		paddedName := strings.Repeat(" ", leftPad) + spacedName + strings.Repeat(" ", rightPad)
+		
+		topBorder := "    ┌" + strings.Repeat("─", boxWidth) + "┐"
+		headerText := fmt.Sprintf("    │%s│", paddedName)
+		bottomBorder := "    └" + strings.Repeat("─", boxWidth) + "┘"
+		
+		boxBlock := fmt.Sprintf("%s\n%s\n%s", topBorder, headerText, bottomBorder)
+		
+		inputStr := fmt.Sprintf("      %s\033[5m_\033[0m", m.textInput.Value())
+
+		return fmt.Sprintf("\n%s\n\n%s\n", boxBlock, inputStr)
 
 	case StateMovieSelect:
-		var opts []string
+		var items [][2]string
 		for _, r := range m.cinemetaMovies {
 			year := r.Year
+			if year == "" {
+				year = r.ReleaseInfo
+			}
 			if len(year) > 4 {
 				year = year[:4]
 			}
-			opts = append(opts, fmt.Sprintf("%s (%s)", r.Name, year))
+			items = append(items, [2]string{r.Name, year})
 		}
-		if len(opts) == 0 {
+		if len(items) == 0 {
 			return "\n  ❌ No database matches found on Cinemeta. Press [Esc] to quit."
 		}
-		return renderMenuCamera(opts, m.cursor, termHeight, "🎬 Select Unified Database Match (Cinemeta):")
+		return renderDatabaseMatchCamera("SELECT DATABASE MATCH", items, m.cursor, m.dbMatchSearch)
 
 	// Anime Path Views
 	case StateAnimeSelect:
-		var opts []string
+		var items [][2]string
 		for _, a := range m.animeList {
 			yearStr := "N/A"
 			if a.Year > 0 {
 				yearStr = fmt.Sprintf("%d", a.Year)
 			}
-			opts = append(opts, fmt.Sprintf("[%s] %s (%s) • %d Eps", a.Type, a.Title, yearStr, a.Episodes))
+			details := fmt.Sprintf("%s  •  %d Eps", yearStr, a.Episodes)
+			items = append(items, [2]string{fmt.Sprintf("[%s] %s", a.Type, a.Title), details})
 		}
-		if len(opts) == 0 {
+		if len(items) == 0 {
 			return "\n  ❌ No database matches found on Jikan. Press [Esc] to quit."
 		}
-		return renderMenuCamera(opts, m.cursor, termHeight, "🗡️ Select Unified Database Match (Jikan):")
+		return renderDatabaseMatchCamera("SELECT DATABASE MATCH", items, m.cursor, m.dbMatchSearch)
 	case StateAnikotoShowSelect:
-		var opts []string
-		for _, s := range m.anikotoShows {
-			opts = append(opts, s.Title)
+		rawName := "SELECT PROVIDER RESULT :"
+		if len(m.dbMatchSearch) > 0 {
+			rawName += " " + m.dbMatchSearch
 		}
-		return renderMenuCamera(opts, m.cursor, termHeight, "🗡️ Select Provider Match (Anikoto):")
+		
+		spacedName := strings.Join(strings.Split(rawName, ""), " ")
+		
+		contentLen := len([]rune(spacedName)) + 2 // +2 for the blinking " _"
+		boxWidth := contentLen + 4
+		if boxWidth < 36 {
+			boxWidth = 36
+		}
+		padAmt := boxWidth - contentLen
+		leftPad := padAmt / 2
+		rightPad := padAmt - leftPad
+		
+		paddedName := strings.Repeat(" ", leftPad) + spacedName + " \033[5m_\033[0m" + strings.Repeat(" ", rightPad)
+		
+		topBorder := "    ┌" + strings.Repeat("─", boxWidth) + "┐"
+		headerText := fmt.Sprintf("    │%s│   %d/%d", paddedName, m.cursor+1, len(m.anikotoShows))
+		bottomBorder := "    └" + strings.Repeat("─", boxWidth) + "┘"
+		
+		boxBlock := fmt.Sprintf("\n%s\n%s\n%s\n\n\n", topBorder, headerText, bottomBorder)
+		
+		maxGlobalRows := termHeight - 8
+		if maxGlobalRows < 5 {
+			maxGlobalRows = 5
+		}
+
+		start := m.cursor - (maxGlobalRows / 2)
+		if start < 0 {
+			start = 0
+		}
+		end := start + maxGlobalRows
+		if end > len(m.anikotoShows) {
+			end = len(m.anikotoShows)
+			start = end - maxGlobalRows
+			if start < 0 {
+				start = 0
+			}
+		}
+
+		var optsUI string
+		for i := start; i < end; i++ {
+			s := m.anikotoShows[i]
+			title := fmt.Sprintf("%d. %s", i+1, s.Title)
+			if i == m.cursor {
+				optsUI += fmt.Sprintf("      \033[47;30m • %s \033[0m\n", title)
+			} else {
+				optsUI += fmt.Sprintf("         %s \n", title)
+			}
+		}
+		return boxBlock + optsUI
 	case StateAnikotoEpSelect:
-		var opts []string
-		for _, ep := range m.anikotoEpisodes {
-			opts = append(opts, fmt.Sprintf("Episode %s", ep.Num))
+		rawName := "SELECT EPISODE NUMBER :"
+		if len(m.dbMatchSearch) > 0 {
+			rawName += " " + m.dbMatchSearch
 		}
-		return renderMenuCamera(opts, m.cursor, termHeight, "🗡️ Select Target Episode:")
+		
+		spacedName := strings.Join(strings.Split(rawName, ""), " ")
+		
+		contentLen := len([]rune(spacedName)) + 2 // +2 for the blinking " _"
+		boxWidth := contentLen + 4
+		if boxWidth < 36 {
+			boxWidth = 36
+		}
+		padAmt := boxWidth - contentLen
+		leftPad := padAmt / 2
+		rightPad := padAmt - leftPad
+		
+		paddedName := strings.Repeat(" ", leftPad) + spacedName + " \033[5m_\033[0m" + strings.Repeat(" ", rightPad)
+		
+		topBorder := "    ┌" + strings.Repeat("─", boxWidth) + "┐"
+		headerText := fmt.Sprintf("    │%s│   %d/%d", paddedName, m.cursor+1, len(m.anikotoEpisodes))
+		bottomBorder := "    └" + strings.Repeat("─", boxWidth) + "┘"
+		
+		boxBlock := fmt.Sprintf("\n%s\n%s\n%s\n\n\n", topBorder, headerText, bottomBorder)
+		
+		maxGlobalRows := termHeight - 8
+		if maxGlobalRows < 5 {
+			maxGlobalRows = 5
+		}
+
+		start := m.cursor - (maxGlobalRows / 2)
+		if start < 0 {
+			start = 0
+		}
+		end := start + maxGlobalRows
+		if end > len(m.anikotoEpisodes) {
+			end = len(m.anikotoEpisodes)
+			start = end - maxGlobalRows
+			if start < 0 {
+				start = 0
+			}
+		}
+
+		var optsUI string
+		for i := start; i < end; i++ {
+			ep := m.anikotoEpisodes[i]
+			title := fmt.Sprintf("%d. Episode %s", i+1, ep.Num)
+			if i == m.cursor {
+				optsUI += fmt.Sprintf("      \033[47;30m • %s \033[0m\n", title)
+			} else {
+				optsUI += fmt.Sprintf("         %s \n", title)
+			}
+		}
+		return boxBlock + optsUI
 	case StateAnikotoModeSelect:
-		return renderMenuCamera([]string{"1. Japanese (Subtitles)", "2. English (Dubbed)"}, m.cursor, termHeight, "🗡️ Select Audio Track Mode:")
-	case StateAnikotoServerSelect:
-		var opts []string
-		for _, s := range m.anikotoServers {
-			opts = append(opts, fmt.Sprintf("Server: %s", s.Name))
+		rawName := "SELECT AUDIO TRACK 🗣️"
+		spacedName := strings.Join(strings.Split(rawName, ""), " ")
+		
+		contentLen := len([]rune(spacedName))
+		boxWidth := contentLen + 4
+		if boxWidth < 36 {
+			boxWidth = 36
 		}
-		return renderMenuCamera(opts, m.cursor, termHeight, "🗡️ Select Streaming Relay Server:")
+		padAmt := boxWidth - contentLen
+		leftPad := padAmt / 2
+		rightPad := padAmt - leftPad
+		
+		paddedName := strings.Repeat(" ", leftPad) + spacedName + strings.Repeat(" ", rightPad)
+		
+		topBorder := "    ┌" + strings.Repeat("─", boxWidth) + "┐"
+		headerText := fmt.Sprintf("    │%s│", paddedName)
+		bottomBorder := "    └" + strings.Repeat("─", boxWidth) + "┘"
+		
+		boxBlock := fmt.Sprintf("\n%s\n%s\n%s\n\n\n", topBorder, headerText, bottomBorder)
+		
+		opts := []string{"Japanese (with subtitles)", "English (dubbed)"}
+		var optsUI string
+		for i, opt := range opts {
+			if i == m.cursor {
+				optsUI += fmt.Sprintf("      \033[47;30m • %s \033[0m\n", opt)
+			} else {
+				optsUI += fmt.Sprintf("         %s \n", opt)
+			}
+		}
+		return boxBlock + optsUI
+
 
 	// Western Path Views
 	case StateTVShowSelect:
-		var opts []string
+		var items [][2]string
 		for _, show := range m.tvShows {
 			year := show.Premiered
 			if len(year) >= 4 {
 				year = year[:4]
 			}
-			opts = append(opts, fmt.Sprintf("%s (%s)", show.Name, year))
+			items = append(items, [2]string{show.Name, year})
 		}
-		return renderMenuCamera(opts, m.cursor, termHeight, "📺 Select Unified Database Match:")
+		return renderDatabaseMatchCamera("SELECT DATABASE MATCH", items, m.cursor, m.dbMatchSearch)
 	case StateTVSeasonSelect:
 		var opts []string
 		for _, season := range m.tvSeasons {
@@ -397,17 +664,160 @@ func (m Model) View() string {
 		}
 		return renderMenuCamera(opts, m.cursor, termHeight, fmt.Sprintf("📺 %s - Choose Target Season Pack:", m.selectedShow))
 	case StateQuality:
-		return renderMenuCamera(config.QualityOptions, m.cursor, termHeight, fmt.Sprintf("🍿 Processing Matrix: \"%s\"\n\n  Select Sizing Profile Filter:", m.currentQuery))
+		modeStr := "MOVIE"
+		if m.isTVShow {
+			modeStr = "TV SHOW"
+		}
+		title := fmt.Sprintf("SELECT %s QUALITY", modeStr)
+		
+		rawTitle := strings.ToUpper(title)
+		spacedTitle := strings.Join(strings.Split(rawTitle, ""), " ")
+		
+		contentLen := len([]rune(spacedTitle))
+		boxWidth := contentLen + 4
+		if boxWidth < 36 {
+			boxWidth = 36
+		}
+		padAmt := boxWidth - contentLen
+		leftPad := padAmt / 2
+		rightPad := padAmt - leftPad
+		
+		paddedTitle := strings.Repeat(" ", leftPad) + spacedTitle + strings.Repeat(" ", rightPad)
+		
+		topBorder := "    ┌" + strings.Repeat("─", boxWidth) + "┐"
+		headerText := fmt.Sprintf("    │%s│", paddedTitle)
+		bottomBorder := "    └" + strings.Repeat("─", boxWidth) + "┘"
+		
+		s := fmt.Sprintf("\n%s\n%s\n%s\n\n", topBorder, headerText, bottomBorder)
+
+		for i, opt := range config.QualityOptions {
+			isTarget := (i == m.cursor)
+			displayRow := fmt.Sprintf(" %s ", opt)
+
+			if isTarget {
+				s += fmt.Sprintf("  \033[30;47m  \033[5m●\033[0;30;47m %s  \033[0m\n", displayRow)
+			} else {
+				s += fmt.Sprintf("      %s\n", displayRow)
+			}
+		}
+		return s
 	case StateTVFileSelect:
-		return renderMenuCamera(m.tvFiles, m.cursor, termHeight, "📺 EXTRACTION COMPLETE - Select Target Episode:")
+		width := m.terminalWidth
+		if width == 0 {
+			width = 80
+		}
+
+		// Cinematic Header
+		rawTitle := strings.ToUpper(m.currentQuery)
+		spaced := strings.Join(strings.Split(rawTitle, ""), " ")
+		bigTitle := strings.ReplaceAll(spaced, "   ", "     ")
+
+		dotted := centerStr(strings.Repeat("-", len(bigTitle)+8), width)
+		paddedTitle := centerStr(bigTitle, width)
+		coloredTitle := strings.Replace(paddedTitle, bigTitle, fmt.Sprintf("\033[1;37m%s\033[0m", bigTitle), 1)
+
+		rawQual := m.qualityFilter
+		if rawQual == "All" {
+			rawQual = "ANY QUALITY"
+		} else {
+			rawQual = strings.ToUpper(rawQual)
+		}
+		paddedQual := centerStr(rawQual, width)
+
+		var s string
+		s += fmt.Sprintf("\n%s\n%s\n%s\n%s\n\n", dotted, coloredTitle, dotted, paddedQual)
+		
+		rawName := "EPISODE NO: " + m.tvFileSearch
+		spacedName := strings.Join(strings.Split(rawName, ""), " ")
+		visibleLen := len([]rune(spacedName)) + 2 // +2 for " _"
+		padAmtHeader := 30 - visibleLen
+		if padAmtHeader < 0 {
+			padAmtHeader = 0
+		}
+		paddedName := spacedName + " \033[5m_\033[0m" + strings.Repeat(" ", padAmtHeader)
+
+		topBorder := "    ┌" + strings.Repeat("─", 32) + "┐"
+		headerText := fmt.Sprintf("    │ %s │", paddedName)
+		bottomBorder := "    └" + strings.Repeat("─", 32) + "┘"
+
+		currentLocal := 0
+		if len(m.tvFiles) > 0 {
+			currentLocal = m.cursor + 1
+		}
+		counterStr := ""
+		if len(m.tvFiles) > 0 {
+			counterStr = fmt.Sprintf("  |  %d/%d", currentLocal, len(m.tvFiles))
+		}
+
+		middleRow := headerText + strings.Repeat(" ", 32) + counterStr
+
+		s += "\n" + topBorder + "\n" + middleRow + "\n" + bottomBorder + "\n\n"
+
+		const maxLocalItems = 10
+		start := m.cursor - (maxLocalItems / 2)
+		if start < 0 {
+			start = 0
+		}
+		end := start + maxLocalItems
+		if end > len(m.tvFiles) {
+			end = len(m.tvFiles)
+			start = end - maxLocalItems
+			if start < 0 {
+				start = 0
+			}
+		}
+
+		for i := start; i < end; i++ {
+			isTarget := (i == m.cursor)
+			fileText := m.tvFiles[i]
+
+			fields := strings.Fields(fileText)
+			if len(fields) > 1 && len(fields[0]) > 0 && fields[0][0] >= '0' && fields[0][0] <= '9' {
+				fileText = strings.TrimPrefix(fileText, fields[0])
+				fileText = strings.TrimSpace(fileText)
+			}
+
+			if len([]rune(fileText)) > 60 {
+				fileText = string([]rune(fileText)[:57]) + "..."
+			} else {
+				padAmtTitle := 60 - len([]rune(fileText))
+				fileText = fileText + strings.Repeat(" ", padAmtTitle)
+			}
+			
+			displayRow := fileText
+
+			if isTarget {
+				s += fmt.Sprintf("\033[30;47m  \033[5m●\033[0;30;47m %s  \033[0m\n", displayRow)
+			} else {
+				s += fmt.Sprintf("    %s\n", displayRow)
+			}
+		}
+
+		return s
 
 	case StateLoading:
-		if m.isAnime {
-			return "\n  📡 Penetrating Anikoto API Relays & Scraping Media IDs...\n"
-		} else if m.isTVShow && m.selectedMagnet != "" {
-			return "\n  📡 Connecting to Swarm & Extracting Episode Metadata...\n"
+		spinner := m.loadingSpinner.View()
+		width := m.terminalWidth
+		if width == 0 {
+			width = 80
 		}
-		return "\n  📡 Querying Index Repositories & Populating Channels...\n"
+		height := m.terminalHeight
+		if height == 0 {
+			height = 24
+		}
+		purpleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
+
+		var msg string
+		if m.isAnime {
+			msg = "Loading Anime..."
+		} else if m.isTVShow && m.selectedMagnet != "" {
+			msg = "Loading Episodes..."
+		} else {
+			msg = "Loading Torrents..."
+		}
+
+		content := fmt.Sprintf("%s %s", spinner, purpleStyle.Render(msg))
+		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, content)
 
 	case StateList:
 		width := m.terminalWidth

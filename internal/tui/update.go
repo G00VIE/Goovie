@@ -2,12 +2,15 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"bubble-stream/internal/config"
 	"bubble-stream/internal/player"
 	"bubble-stream/internal/prowlarr"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -20,6 +23,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.loadingSpinner, cmd = m.loadingSpinner.Update(msg)
+		return m, cmd
+
+	case player.PlayerFinishedMsg:
+		if msg.Err != nil {
+			m.err = msg.Err
+			m.state = StateModeSelect
+		} else {
+			if m.isAnime {
+				m.state = StateAnikotoEpSelect
+			} else if m.isTVShow {
+				m.state = StateTVFileSelect
+			} else {
+				m.state = StateList
+			}
+		}
+		return m, nil
+
 	case APIKeyStatusMsg:
 		if msg.Found {
 			m.state = StateFrontPage
@@ -69,6 +92,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state != StateModeSelect && m.cursor > 0 {
 				m.cursor--
 			}
+
 		case "down":
 			if m.state == StateAnimeTypeSelect && m.cursor < len(config.AnimeTypeOptions)-1 {
 				m.cursor++
@@ -104,9 +128,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == StateAnikotoModeSelect && m.cursor < 1 { // 0: Sub, 1: Dub
 				m.cursor++
 			}
-			if m.state == StateAnikotoServerSelect && m.cursor < len(m.anikotoServers)-1 {
-				m.cursor++
-			}
+
 		case "left":
 			if m.state == StateModeSelect {
 				if m.cursor == 0 {
@@ -163,11 +185,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cursor = 0
 					m.state = StateLoading
 					if m.isAnime {
-						return m, prowlarr.FetchAnime(rawInput, m.animeTypeFilter)
+						return m, tea.Batch(m.loadingSpinner.Tick, prowlarr.FetchAnime(rawInput, m.animeTypeFilter))
 					} else if m.isTVShow {
-						return m, prowlarr.FetchTVShows(rawInput)
+						return m, tea.Batch(m.loadingSpinner.Tick, prowlarr.FetchTVShows(rawInput))
 					} else {
-						return m, prowlarr.FetchCinemetaMovies(rawInput)
+						return m, tea.Batch(m.loadingSpinner.Tick, prowlarr.FetchCinemetaMovies(rawInput))
 					}
 				}
 
@@ -176,6 +198,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.cinemetaMovies) > 0 {
 					chosen := m.cinemetaMovies[m.cursor]
 					year := chosen.Year
+					if year == "" {
+						year = chosen.ReleaseInfo
+					}
 					if len(year) > 4 {
 						year = year[:4]
 					}
@@ -195,7 +220,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					chosen := m.animeList[m.cursor]
 					m.cursor = 0
 					m.state = StateLoading
-					return m, player.FetchAnikotoShowsCmd(chosen.Title)
+					return m, tea.Batch(m.loadingSpinner.Tick, player.FetchAnikotoShowsCmd(chosen.Title))
 				}
 
 			case StateAnikotoShowSelect:
@@ -203,7 +228,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					chosen := m.anikotoShows[m.cursor]
 					m.cursor = 0
 					m.state = StateLoading
-					return m, player.FetchAnikotoEpisodesCmd(chosen.Slug)
+					return m, tea.Batch(m.loadingSpinner.Tick, player.FetchAnikotoEpisodesCmd(chosen.Slug))
 				}
 			case StateAnikotoEpSelect:
 				if len(m.anikotoEpisodes) > 0 {
@@ -220,14 +245,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.cursor = 0
 				m.state = StateLoading
-				return m, player.FetchAnikotoServersCmd(m.anikotoSelectedEp.Token, m.anikotoMode, m.anikotoWatchURL)
-			case StateAnikotoServerSelect:
-				if len(m.anikotoServers) > 0 {
-					chosen := m.anikotoServers[m.cursor]
-					m.cursor = 0
-					m.state = StateLoading
-					return m, player.ResolveAnikotoStreamCmd(chosen.LinkID, m.anikotoWatchURL, m.anikotoMode)
-				}
+				return m, tea.Batch(m.loadingSpinner.Tick, player.RaceAnikotoStreamsCmd(m.anikotoSelectedEp.Token, m.anikotoMode, m.anikotoWatchURL))
 
 			// --- Western TV Logic Flow ---
 			case StateTVShowSelect:
@@ -236,12 +254,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedShow = chosen.Name
 					m.cursor = 0
 					m.state = StateLoading
-					return m, prowlarr.FetchTVSeasons(chosen.ID)
+					return m, tea.Batch(m.loadingSpinner.Tick, prowlarr.FetchTVSeasons(chosen.ID))
 				}
 			case StateTVSeasonSelect:
 				if len(m.tvSeasons) > 0 {
 					chosen := m.tvSeasons[m.cursor]
 					m.selectedSeason = chosen.Number
+					m.selectedSeasonID = chosen.ID
 					m.currentQuery = fmt.Sprintf("%s S%02d", m.selectedShow, m.selectedSeason)
 					m.cursor = 0
 					m.state = StateQuality
@@ -279,7 +298,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 
-				resolvedMagnet := prowlarr.ResolveProxyLink(chosen)
+				resolvedMagnet := prowlarr.ResolveProxyLink(chosen, m.isAnime)
 				if resolvedMagnet == "" {
 					return m, func() tea.Msg { return prowlarr.ErrMsg{Err: fmt.Errorf("failed to unmask link.")} }
 				}
@@ -287,10 +306,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.isTVShow {
 					m.selectedMagnet = resolvedMagnet
 					m.state = StateLoading
-					return m, prowlarr.FetchTVFiles(resolvedMagnet)
+					m.tvEpisodes = nil // Clear old episodes
+					m.tvFiles = nil    // Clear old files
+					return m, tea.Batch(m.loadingSpinner.Tick, prowlarr.FetchTVFiles(resolvedMagnet), prowlarr.FetchTVEpisodes(m.selectedSeasonID))
 				}
 
-				return m, player.LaunchPlayer(resolvedMagnet, "", "")
+				m.state = StateLoadingTorrent
+				return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(resolvedMagnet, "", ""))
 
 			case StateTVFileSelect:
 				if len(m.tvFiles) > 0 {
@@ -298,8 +320,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					fields := strings.Fields(chosenLine)
 					if len(fields) > 0 {
 						targetIndex := fields[0]
-						return m, player.LaunchPlayer(m.selectedMagnet, targetIndex, "")
+						m.state = StateLoadingTorrent
+						return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(m.selectedMagnet, targetIndex, ""))
 					}
+				}
+			}
+		case "backspace":
+			if m.state == StateTVFileSelect {
+				if len(m.tvFileSearch) > 0 {
+					m.tvFileSearch = m.tvFileSearch[:len(m.tvFileSearch)-1]
+					m = m.updateTVFileCursor()
+				}
+			} else if m.state == StateMovieSelect || m.state == StateTVShowSelect || m.state == StateAnimeSelect || m.state == StateAnikotoShowSelect || m.state == StateAnikotoEpSelect {
+				if len(m.dbMatchSearch) > 0 {
+					m.dbMatchSearch = m.dbMatchSearch[:len(m.dbMatchSearch)-1]
+					m = m.updateDBMatchCursor()
+				}
+			}
+		case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			if m.state == StateTVFileSelect {
+				if len(m.tvFileSearch) < 4 { // Prevent infinite typing
+					m.tvFileSearch += msg.String()
+					m = m.updateTVFileCursor()
+				}
+			} else if m.state == StateMovieSelect || m.state == StateTVShowSelect || m.state == StateAnimeSelect || m.state == StateAnikotoShowSelect || m.state == StateAnikotoEpSelect {
+				if len(m.dbMatchSearch) < 4 {
+					m.dbMatchSearch += msg.String()
+					m = m.updateDBMatchCursor()
 				}
 			}
 		}
@@ -318,21 +365,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.anikotoShows = msg
 		m.state = StateAnikotoShowSelect
 		m.cursor = 0
+		m.dbMatchSearch = ""
 		return m, nil
 	case player.AnikotoEpsMsg:
 		m.anikotoEpisodes = msg.Eps
 		m.anikotoWatchURL = msg.WatchURL
 		m.state = StateAnikotoEpSelect
 		m.cursor = 0
+		m.dbMatchSearch = ""
 		return m, nil
-	case player.AnikotoServersMsg:
-		m.anikotoServers = msg
-		m.state = StateAnikotoServerSelect
-		m.cursor = 0
-		return m, nil
+
 	case player.AnikotoStreamMsg:
 		proxyURL := player.GlobalProxy.Register(msg.M3u8URL, msg.Referer)
-		return m, player.LaunchPlayer(proxyURL, "", msg.Referer)
+		m.state = StateLoadingTorrent
+		return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(proxyURL, "", msg.Referer))
 
 	case prowlarr.TvShowsMsg:
 		m.tvShows = msg
@@ -344,8 +390,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = StateTVSeasonSelect
 		m.cursor = 0
 		return m, nil
+	case prowlarr.TvEpisodesMsg:
+		m.tvEpisodes = msg
+		if len(m.tvFiles) > 0 {
+			m.tvFiles = simplifyTVFiles(m.tvFiles, m.tvEpisodes)
+		}
+		return m, nil
 	case prowlarr.TvFilesMsg:
 		m.tvFiles = msg
+		if len(m.tvEpisodes) > 0 {
+			m.tvFiles = simplifyTVFiles(m.tvFiles, m.tvEpisodes)
+		}
 		m.state = StateTVFileSelect
 		m.cursor = 0
 		return m, nil
@@ -430,4 +485,82 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setupInput, cmd = m.setupInput.Update(msg)
 	}
 	return m, cmd
+}
+
+func simplifyTVFiles(files []string, episodes []prowlarr.TVMazeEpisode) []string {
+	var simplified []string
+	epMap := make(map[int]string)
+	for _, ep := range episodes {
+		epMap[ep.Number] = ep.Name
+	}
+
+	re := regexp.MustCompile(`(?i)(?:s\d{1,2}e|e|ep)\s*0*(\d{1,3})\b`)
+
+	for _, f := range files {
+		fields := strings.SplitN(f, " ", 2)
+		if len(fields) != 2 {
+			simplified = append(simplified, f)
+			continue
+		}
+		idxStr := fields[0]
+		filename := fields[1]
+
+		match := re.FindStringSubmatch(filename)
+		if len(match) > 1 {
+			epNum, _ := strconv.Atoi(match[1])
+			if title, ok := epMap[epNum]; ok {
+				newTitle := fmt.Sprintf("%s Episode %d: %s", idxStr, epNum, title)
+				simplified = append(simplified, newTitle)
+				continue
+			}
+		}
+		simplified = append(simplified, f)
+	}
+	return simplified
+}
+
+func (m Model) updateTVFileCursor() Model {
+	if m.tvFileSearch == "" {
+		return m
+	}
+	searchStr := fmt.Sprintf("Episode %s:", m.tvFileSearch)
+	for i, f := range m.tvFiles {
+		if strings.Contains(f, searchStr) {
+			m.cursor = i
+			return m
+		}
+	}
+	return m
+}
+
+func (m Model) updateDBMatchCursor() Model {
+	if m.dbMatchSearch == "" {
+		m.cursor = 0
+		return m
+	}
+	idx, err := strconv.Atoi(m.dbMatchSearch)
+	if err == nil {
+		target := idx - 1 // 1-based index
+		maxIdx := 0
+		if m.state == StateMovieSelect {
+			maxIdx = len(m.cinemetaMovies) - 1
+		} else if m.state == StateTVShowSelect {
+			maxIdx = len(m.tvShows) - 1
+		} else if m.state == StateAnimeSelect {
+			maxIdx = len(m.animeList) - 1
+		} else if m.state == StateAnikotoShowSelect {
+			maxIdx = len(m.anikotoShows) - 1
+		} else if m.state == StateAnikotoEpSelect {
+			maxIdx = len(m.anikotoEpisodes) - 1
+		}
+		
+		if target < 0 {
+			target = 0
+		}
+		if target > maxIdx {
+			target = maxIdx
+		}
+		m.cursor = target
+	}
+	return m
 }

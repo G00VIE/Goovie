@@ -1,6 +1,7 @@
 package player
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"bubble-stream/internal/config"
@@ -153,7 +155,57 @@ func FetchAnikotoEpisodesCmd(slug string) tea.Cmd {
 	}
 }
 
-func FetchAnikotoServersCmd(epToken string, mode string, watchURL string) tea.Cmd {
+func resolveStream(linkID string, watchURL string, mode string) (AnikotoStreamMsg, error) {
+	client := &http.Client{Jar: GlobalJar, Timeout: 15 * time.Second}
+	getSourceURL := fmt.Sprintf("%s/ajax/server?get=%s", config.AnikotoBaseURL, url.QueryEscape(linkID))
+	sourceBytes, err := fetchHTTP(client, getSourceURL, watchURL, true)
+	if err != nil {
+		return AnikotoStreamMsg{}, fmt.Errorf("failed to get stream embed JSON")
+	}
+
+	var sourceRes SourceResponse
+	json.Unmarshal(sourceBytes, &sourceRes)
+	embedURL := sourceRes.Result.URL
+	if embedURL == "" {
+		return AnikotoStreamMsg{}, fmt.Errorf("resolved embed URL is empty")
+	}
+
+	parsedEmbedURL, err := url.Parse(embedURL)
+	if err != nil {
+		return AnikotoStreamMsg{}, err
+	}
+	embedHost := parsedEmbedURL.Host
+
+	playerPageBytes, err := fetchHTTP(client, embedURL, config.AnikotoBaseURL+"/", false)
+	if err != nil {
+		return AnikotoStreamMsg{}, fmt.Errorf("failed to fetch player webpage")
+	}
+
+	mediaIDRE := regexp.MustCompile(`data-id="(\d+)"`)
+	mediaIDMatch := mediaIDRE.FindStringSubmatch(string(playerPageBytes))
+	if len(mediaIDMatch) < 2 {
+		return AnikotoStreamMsg{}, fmt.Errorf("could not find media ID in player HTML")
+	}
+	mediaID := mediaIDMatch[1]
+
+	finalSourcesURL := fmt.Sprintf("https://%s/stream/getSourcesNew?id=%s&type=%s", embedHost, mediaID, mode)
+	finalSourcesBytes, err := fetchHTTP(client, finalSourcesURL, embedURL, true)
+	if err != nil {
+		return AnikotoStreamMsg{}, fmt.Errorf("failed to fetch final m3u8 sources")
+	}
+
+	var finalRes GetSourcesResponse
+	json.Unmarshal(finalSourcesBytes, &finalRes)
+
+	if finalRes.Sources.File == "" {
+		return AnikotoStreamMsg{}, fmt.Errorf("no streaming link resolved from provider")
+	}
+
+	referrerBase := parsedEmbedURL.Scheme + "://" + parsedEmbedURL.Host + "/"
+	return AnikotoStreamMsg{M3u8URL: finalRes.Sources.File, Referer: referrerBase}, nil
+}
+
+func RaceAnikotoStreamsCmd(epToken string, mode string, watchURL string) tea.Cmd {
 	return func() tea.Msg {
 		client := &http.Client{Jar: GlobalJar, Timeout: 15 * time.Second}
 		serverListURL := fmt.Sprintf("%s/ajax/server/list?servers=%s", config.AnikotoBaseURL, url.QueryEscape(epToken))
@@ -183,65 +235,41 @@ func FetchAnikotoServersCmd(epToken string, mode string, watchURL string) tea.Cm
 			return prowlarr.ErrMsg{Err: fmt.Errorf("no servers found for %s mode", mode)}
 		}
 
-		var servers []ServerResult
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		resultChan := make(chan AnikotoStreamMsg, len(serverMatches))
+		
+		var wg sync.WaitGroup
 		for _, m := range serverMatches {
-			servers = append(servers, ServerResult{
-				LinkID: m[1],
-				Name:   strings.TrimSpace(m[2]),
-			})
-		}
-		return AnikotoServersMsg(servers)
-	}
-}
-
-func ResolveAnikotoStreamCmd(linkID string, watchURL string, mode string) tea.Cmd {
-	return func() tea.Msg {
-		client := &http.Client{Jar: GlobalJar, Timeout: 15 * time.Second}
-		getSourceURL := fmt.Sprintf("%s/ajax/server?get=%s", config.AnikotoBaseURL, url.QueryEscape(linkID))
-		sourceBytes, err := fetchHTTP(client, getSourceURL, watchURL, true)
-		if err != nil {
-			return prowlarr.ErrMsg{Err: fmt.Errorf("failed to get stream embed JSON")}
+			wg.Add(1)
+			go func(linkID string) {
+				defer wg.Done()
+				if ctx.Err() != nil {
+					return
+				}
+				res, err := resolveStream(linkID, watchURL, mode)
+				if err == nil {
+					select {
+					case resultChan <- res:
+					case <-ctx.Done():
+					}
+				}
+			}(m[1])
 		}
 
-		var sourceRes SourceResponse
-		json.Unmarshal(sourceBytes, &sourceRes)
-		embedURL := sourceRes.Result.URL
-		if embedURL == "" {
-			return prowlarr.ErrMsg{Err: fmt.Errorf("resolved embed URL is empty")}
+		go func() {
+			wg.Wait()
+			close(resultChan)
+		}()
+
+		res, ok := <-resultChan
+		if !ok {
+			return prowlarr.ErrMsg{Err: fmt.Errorf("all providers failed to resolve a stream")}
 		}
-
-		parsedEmbedURL, err := url.Parse(embedURL)
-		if err != nil {
-			return prowlarr.ErrMsg{Err: err}
-		}
-		embedHost := parsedEmbedURL.Host
-
-		playerPageBytes, err := fetchHTTP(client, embedURL, config.AnikotoBaseURL+"/", false)
-		if err != nil {
-			return prowlarr.ErrMsg{Err: fmt.Errorf("failed to fetch player webpage")}
-		}
-
-		mediaIDRE := regexp.MustCompile(`data-id="(\d+)"`)
-		mediaIDMatch := mediaIDRE.FindStringSubmatch(string(playerPageBytes))
-		if len(mediaIDMatch) < 2 {
-			return prowlarr.ErrMsg{Err: fmt.Errorf("could not find media ID in player HTML")}
-		}
-		mediaID := mediaIDMatch[1]
-
-		finalSourcesURL := fmt.Sprintf("https://%s/stream/getSourcesNew?id=%s&type=%s", embedHost, mediaID, mode)
-		finalSourcesBytes, err := fetchHTTP(client, finalSourcesURL, embedURL, true)
-		if err != nil {
-			return prowlarr.ErrMsg{Err: fmt.Errorf("failed to fetch final m3u8 sources")}
-		}
-
-		var finalRes GetSourcesResponse
-		json.Unmarshal(finalSourcesBytes, &finalRes)
-
-		if finalRes.Sources.File == "" {
-			return prowlarr.ErrMsg{Err: fmt.Errorf("no streaming link resolved from provider")}
-		}
-
-		referrerBase := parsedEmbedURL.Scheme + "://" + parsedEmbedURL.Host + "/"
-		return AnikotoStreamMsg{M3u8URL: finalRes.Sources.File, Referer: referrerBase}
+		
+		cancel()
+		
+		return res
 	}
 }
