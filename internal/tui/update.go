@@ -326,15 +326,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "backspace":
-			if m.state == StateTVFileSelect {
-				if len(m.tvFileSearch) > 0 {
-					m.tvFileSearch = m.tvFileSearch[:len(m.tvFileSearch)-1]
-					m = m.updateTVFileCursor()
+			if m.state == StateSearch {
+				if len(m.textInput.Value()) == 0 {
+					if m.isAnime {
+						m.state = StateAnimeTypeSelect
+						m.cursor = 0
+					} else {
+						m.state = StateModeSelect
+						if m.isTVShow {
+							m.cursor = 1
+						} else {
+							m.cursor = 0
+						}
+					}
 				}
-			} else if m.state == StateMovieSelect || m.state == StateTVShowSelect || m.state == StateAnimeSelect || m.state == StateAnikotoShowSelect || m.state == StateAnikotoEpSelect {
-				if len(m.dbMatchSearch) > 0 {
-					m.dbMatchSearch = m.dbMatchSearch[:len(m.dbMatchSearch)-1]
-					m = m.updateDBMatchCursor()
+			} else if m.state == StateTVFileSelect && len(m.tvFileSearch) > 0 {
+				m.tvFileSearch = m.tvFileSearch[:len(m.tvFileSearch)-1]
+				m = m.updateTVFileCursor()
+			} else if (m.state == StateMovieSelect || m.state == StateTVShowSelect || m.state == StateAnimeSelect || m.state == StateAnikotoShowSelect || m.state == StateAnikotoEpSelect) && len(m.dbMatchSearch) > 0 {
+				m.dbMatchSearch = m.dbMatchSearch[:len(m.dbMatchSearch)-1]
+				m = m.updateDBMatchCursor()
+			} else {
+				m.dbMatchSearch = ""
+				m.tvFileSearch = ""
+				switch m.state {
+				case StateAnimeTypeSelect:
+					m.state = StateModeSelect
+					m.cursor = 2
+				case StateMovieSelect, StateTVShowSelect, StateAnimeSelect:
+					m.state = StateSearch
+					m.cursor = 0
+				case StateQuality:
+					if m.isTVShow {
+						m.state = StateTVSeasonSelect
+					} else {
+						m.state = StateMovieSelect
+					}
+					m.cursor = 0
+				case StateList:
+					m.state = StateQuality
+					m.cursor = 0
+				case StateTVSeasonSelect:
+					m.state = StateTVShowSelect
+					m.cursor = 0
+				case StateTVFileSelect:
+					m.state = StateList
+					m.cursor = 0
+				case StateAnikotoShowSelect:
+					m.state = StateAnimeSelect
+					m.cursor = 0
+				case StateAnikotoEpSelect:
+					m.state = StateAnikotoShowSelect
+					m.cursor = 0
+				case StateAnikotoModeSelect:
+					m.state = StateAnikotoEpSelect
+					m.cursor = 0
 				}
 			}
 		case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":

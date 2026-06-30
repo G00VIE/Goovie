@@ -355,12 +355,18 @@ func (m Model) View() string {
 		}
 		
 		subtitleStyle := lipgloss.NewStyle().Align(lipgloss.Center)
-		subtitle := subtitleStyle.Render("[ ENTER ] to continue")
+		enterInst := subtitleStyle.Render("[ ENTER ] to continue")
+		backInst := subtitleStyle.Render("[ BACKSPACE ] to go back")
+		escInst := subtitleStyle.Render("[ ESC ] to exit")
 		
 		finalUI := lipgloss.JoinVertical(lipgloss.Center,
 			m.cachedFrontTitle,
 			"\n\n",
-			subtitle,
+			enterInst,
+			"\n",
+			backInst,
+			"\n",
+			escInst,
 		)
 		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, finalUI)
 
