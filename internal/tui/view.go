@@ -318,8 +318,10 @@ func (m Model) View() string {
 		if width == 0 {
 			width = 80
 		}
-		msg := lipgloss.NewStyle().Align(lipgloss.Center).Foreground(lipgloss.Color("99")).Render("Reading Prowlarr configuration...")
-		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, msg)
+		spinnerView := m.loadingSpinner.View()
+		msg := lipgloss.NewStyle().Align(lipgloss.Center).Foreground(lipgloss.Color("99")).Render(m.loadingPhrase)
+		finalUI := lipgloss.JoinVertical(lipgloss.Center, spinnerView, msg)
+		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, finalUI)
 
 	case StateSetupAPIKey:
 		width := m.terminalWidth
@@ -339,9 +341,9 @@ func (m Model) View() string {
 			width = 80
 		}
 		spinnerView := m.loadingSpinner.View()
-		loadingText := lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Render(" Loading chunk...")
+		loadingText := lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Render(m.loadingPhrase)
 		
-		finalUI := lipgloss.JoinHorizontal(lipgloss.Center, spinnerView, loadingText)
+		finalUI := lipgloss.JoinVertical(lipgloss.Center, spinnerView, loadingText)
 		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, finalUI)
 
 	case StateFrontPage:
@@ -813,16 +815,7 @@ func (m Model) View() string {
 		}
 		purpleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
 
-		var msg string
-		if m.isAnime {
-			msg = "Loading Anime..."
-		} else if m.isTVShow && m.selectedMagnet != "" {
-			msg = "Loading Episodes..."
-		} else {
-			msg = "Loading Torrents..."
-		}
-
-		content := fmt.Sprintf("%s %s", spinner, purpleStyle.Render(msg))
+		content := lipgloss.JoinVertical(lipgloss.Center, spinner, purpleStyle.Render(m.loadingPhrase))
 		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, content)
 
 	case StateList:

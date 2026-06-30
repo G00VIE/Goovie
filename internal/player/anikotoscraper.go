@@ -44,6 +44,11 @@ type GetSourcesResponse struct {
 	Sources struct {
 		File string `json:"file"`
 	} `json:"sources"`
+	Tracks []struct {
+		File  string `json:"file"`
+		Label string `json:"label"`
+		Kind  string `json:"kind"`
+	} `json:"tracks"`
 }
 
 type AnikotoShowsMsg []ShowResult
@@ -53,8 +58,9 @@ type AnikotoEpsMsg struct {
 }
 type AnikotoServersMsg []ServerResult
 type AnikotoStreamMsg struct {
-	M3u8URL string
-	Referer string
+	M3u8URL     string
+	Referer     string
+	SubtitleURL string
 }
 
 func fetchHTTP(client *http.Client, reqURL string, referer string, xRequestedWith bool) ([]byte, error) {
@@ -201,8 +207,16 @@ func resolveStream(linkID string, watchURL string, mode string) (AnikotoStreamMs
 		return AnikotoStreamMsg{}, fmt.Errorf("no streaming link resolved from provider")
 	}
 
+	var subtitleURL string
+	for _, track := range finalRes.Tracks {
+		if track.Kind == "captions" {
+			subtitleURL = track.File
+			break
+		}
+	}
+
 	referrerBase := parsedEmbedURL.Scheme + "://" + parsedEmbedURL.Host + "/"
-	return AnikotoStreamMsg{M3u8URL: finalRes.Sources.File, Referer: referrerBase}, nil
+	return AnikotoStreamMsg{M3u8URL: finalRes.Sources.File, Referer: referrerBase, SubtitleURL: subtitleURL}, nil
 }
 
 func RaceAnikotoStreamsCmd(epToken string, mode string, watchURL string) tea.Cmd {

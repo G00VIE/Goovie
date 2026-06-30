@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math/rand"
 	"regexp"
 	"sort"
 	"strconv"
@@ -27,6 +28,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.loadingSpinner, cmd = m.loadingSpinner.Update(msg)
 		return m, cmd
+
+	case LoadingTickMsg:
+		m.loadingPhrase = LoadingPhrases[rand.Intn(len(LoadingPhrases))]
+		return m, tickLoadingText()
 
 	case player.PlayerFinishedMsg:
 		if msg.Err != nil {
@@ -184,6 +189,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					rawInput := strings.TrimSpace(m.textInput.Value())
 					m.cursor = 0
 					m.state = StateLoading
+					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
 					if m.isAnime {
 						return m, tea.Batch(m.loadingSpinner.Tick, prowlarr.FetchAnime(rawInput, m.animeTypeFilter))
 					} else if m.isTVShow {
@@ -220,6 +226,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					chosen := m.animeList[m.cursor]
 					m.cursor = 0
 					m.state = StateLoading
+					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
 					return m, tea.Batch(m.loadingSpinner.Tick, player.FetchAnikotoShowsCmd(chosen.Title))
 				}
 
@@ -228,6 +235,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					chosen := m.anikotoShows[m.cursor]
 					m.cursor = 0
 					m.state = StateLoading
+					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
 					return m, tea.Batch(m.loadingSpinner.Tick, player.FetchAnikotoEpisodesCmd(chosen.Slug))
 				}
 			case StateAnikotoEpSelect:
@@ -245,6 +253,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.cursor = 0
 				m.state = StateLoading
+					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
 				return m, tea.Batch(m.loadingSpinner.Tick, player.RaceAnikotoStreamsCmd(m.anikotoSelectedEp.Token, m.anikotoMode, m.anikotoWatchURL))
 
 			// --- Western TV Logic Flow ---
@@ -254,6 +263,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedShow = chosen.Name
 					m.cursor = 0
 					m.state = StateLoading
+					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
 					return m, tea.Batch(m.loadingSpinner.Tick, prowlarr.FetchTVSeasons(chosen.ID))
 				}
 			case StateTVSeasonSelect:
@@ -306,13 +316,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.isTVShow {
 					m.selectedMagnet = resolvedMagnet
 					m.state = StateLoading
+					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
 					m.tvEpisodes = nil // Clear old episodes
 					m.tvFiles = nil    // Clear old files
 					return m, tea.Batch(m.loadingSpinner.Tick, prowlarr.FetchTVFiles(resolvedMagnet), prowlarr.FetchTVEpisodes(m.selectedSeasonID))
 				}
 
 				m.state = StateLoadingTorrent
-				return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(resolvedMagnet, "", ""))
+					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+				return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(resolvedMagnet, "", "", ""))
 
 			case StateTVFileSelect:
 				if len(m.tvFiles) > 0 {
@@ -321,7 +333,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(fields) > 0 {
 						targetIndex := fields[0]
 						m.state = StateLoadingTorrent
-						return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(m.selectedMagnet, targetIndex, ""))
+					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+						return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(m.selectedMagnet, targetIndex, "", ""))
 					}
 				}
 			}
@@ -424,7 +437,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case player.AnikotoStreamMsg:
 		proxyURL := player.GlobalProxy.Register(msg.M3u8URL, msg.Referer)
 		m.state = StateLoadingTorrent
-		return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(proxyURL, "", msg.Referer))
+					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+		return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(proxyURL, "", msg.Referer, msg.SubtitleURL))
 
 	case prowlarr.TvShowsMsg:
 		m.tvShows = msg

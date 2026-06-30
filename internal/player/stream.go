@@ -247,15 +247,19 @@ func (p *VibeProxy) serveSegment(w http.ResponseWriter, r *http.Request, session
 	_, _ = w.Write(body)
 }
 
-func LaunchPlayer(target string, fileIndex string, referer string) tea.Cmd {
+func LaunchPlayer(target string, fileIndex string, referer string, subtitleURL string) tea.Cmd {
 	var c *exec.Cmd
 	if strings.HasPrefix(target, "http") {
-		// Anime path uses pure mpv with optional referer
+		// Anime path uses pure mpv with optional referer and subtitle
+		var args []string
 		if referer != "" {
-			c = exec.Command("mpv", "--referrer="+referer, target)
-		} else {
-			c = exec.Command("mpv", target)
+			args = append(args, "--referrer="+referer)
 		}
+		if subtitleURL != "" {
+			args = append(args, "--sub-file="+subtitleURL)
+		}
+		args = append(args, target)
+		c = exec.Command("mpv", args...)
 	} else {
 		// Western path uses webtorrent pipeline
 		if runtime.GOOS == "windows" {

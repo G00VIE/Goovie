@@ -2,6 +2,8 @@ package tui
 
 import (
 	"image"
+	"math/rand"
+	"time"
 
 	"bubble-stream/internal/config"
 	"bubble-stream/internal/player"
@@ -10,6 +12,47 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+var LoadingPhrases = []string{
+	"Brewing coffee...",
+	"Making a sandwich...",
+	"Petting the kittens...",
+	"Watering the plants...",
+	"Flipping the cassette...",
+	"Dusting off the terminal...",
+	"Warming up the server...",
+	"I have a plan...",
+	"You're a good man aurthur morgan...",
+	"Seeking paleblood...",
+	"Synchronizing...",
+	"Calibrating the Animus...",
+	"Praising the sun...",
+	"Hey, you're finally awake...",
+	"Loading graphical mods...",
+	"I'm Pickle Rick!",
+	"Wubba lubba dub dub...",
+	"Bird up!",
+	"Time to deliver a pizza ball...",
+	"Who killed Hannibal?",
+	"Bombing Israel?!",
+	"Show me what you got...",
+	"Legalize nuclear bombs...",
+	"Waking up Manager Kim...",
+	"Regressing to chapter 1...",
+	"Hiding my power level...",
+	"Awakening S-Class skills...",
+	"Drawing a magic seal...",
+	"Limit release...",
+	"Domain expansion...",
+}
+
+type LoadingTickMsg time.Time
+
+func tickLoadingText() tea.Cmd {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+		return LoadingTickMsg(t)
+	})
+}
 
 const (
 	StateFrontPage       = iota
@@ -91,10 +134,11 @@ type Model struct {
 	cacheTV          map[int]map[bool]string
 	cacheAnime       map[int]map[bool]string
 	activeWCell      int
+	loadingPhrase    string
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, m.loadingSpinner.Tick, checkAPIKeyCmd())
+	return tea.Batch(textinput.Blink, m.loadingSpinner.Tick, checkAPIKeyCmd(), tickLoadingText())
 }
 
 func checkAPIKeyCmd() tea.Cmd {
@@ -121,5 +165,6 @@ func NewModel(ti textinput.Model, setupInput textinput.Model, s spinner.Model, i
 		cacheTV:          cacheTV,
 		cacheAnime:       cacheAnime,
 		activeWCell:      50,
+		loadingPhrase:    LoadingPhrases[rand.Intn(len(LoadingPhrases))],
 	}
 }
