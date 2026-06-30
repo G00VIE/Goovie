@@ -6,6 +6,9 @@
 
 Goovie is a cross-platform CLI tool built in Go that lets you search and stream movies, shows, and anime directly from your terminal. It bridges your local Prowlarr instance with `webtorrent` and `mpv` to deliver seamless, instant streaming without waiting for downloads to finish.
 
+> [!TIP]
+> **🌸 Anime lovers rejoice!** Anime streaming works completely out of the box with **zero setup required**. You don't even need Prowlarr for anime! Just open the app, search, and start watching.
+
 ## 🛠️ Prerequisites
 
 Before running Goovie, ensure you have the following installed on your system. Each tool plays a specific role in making the magic happen!
@@ -81,6 +84,25 @@ Goovie needs to talk to Prowlarr to search for movies/shows. Here's how it conne
 3. **Environment Variables**: For advanced users, you can bypass everything by setting environment variables manually:
    - `PROWLARR_URL` (defaults to `http://localhost:9696`)
    - `PROWLARR_API_KEY`
+
+---
+
+## 🔍 Recommended Indexers (Prowlarr)
+
+When setting up Prowlarr, we recommend adding the following popular public indexers to get the best search results for movies and shows:
+- **1337x**
+- **The Pirate Bay**
+- **YTS**
+- **LimeTorrents**
+- **EZTV**
+- **ShowRSS**
+- **MagnetDL**
+
+> [!WARNING]
+> **Why do I need FlareSolverr?**
+> Some of these indexers (like 1337x or The Pirate Bay) might be blocked by your ISP/DNS, or they might have aggressive Cloudflare "Checking your browser" protections. **FlareSolverr** acts as a proxy that automatically bypasses these Cloudflare checks so Prowlarr can successfully search them. If an indexer fails to connect in Prowlarr, route it through FlareSolverr!
+
+---
 
 ## How it works (The Workflow)
 1. **Search**: Enter the name of the movie or show into the beautiful terminal UI.
