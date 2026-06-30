@@ -6,20 +6,49 @@
 
 Goovie is a cross-platform CLI tool built in Go that lets you search and stream movies, shows, and anime directly from your terminal. It bridges your local Prowlarr instance with `webtorrent` and `mpv` to deliver seamless, instant streaming without waiting for downloads to finish.
 
-## Prerequisites
+## 🛠️ Prerequisites
 
-Before running Goovie, ensure you have the following installed on your system:
+Before running Goovie, ensure you have the following installed on your system. Each tool plays a specific role in making the magic happen!
 
-1. **Prowlarr**: An indexer proxy. Goovie uses this to search across your configured indexers.
-2. **WebTorrent CLI**: Used to stream torrents sequentially.
-   - Install via Node.js: `npm install -g webtorrent-cli`
-3. **MPV Media Player**: The video player used for streaming.
-   - **Debian/Ubuntu:** `sudo apt install mpv`
-   - **Arch Linux:** `sudo pacman -S mpv`
-   - **macOS:** `brew install mpv`
-   - **Windows:** `scoop install mpv` or download from [mpv.io](https://mpv.io)
+1. **[Prowlarr](https://prowlarr.com/)**: An indexer proxy/manager. Goovie uses this to search across all your configured torrent indexers at once.
+2. **[WebTorrent CLI](https://webtorrent.io/)**: The streaming torrent client. This is what makes instant playback possible without waiting for full downloads.
+3. **[MPV](https://mpv.io/)**: A highly capable, robust media player. Goovie pipes the stream directly into mpv for viewing.
+4. **[Flaresolverr](https://github.com/FlareSolverr/FlareSolverr) (Optional but Recommended)**: A proxy server to bypass Cloudflare protection. Useful if your indexers in Prowlarr are protected.
 
-## Installation
+---
+
+## 📦 Installation Guide
+
+Here is a quick breakdown of how to install the prerequisites on each device!
+
+### 🪟 Windows
+You can use [Winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/) (comes pre-installed on modern Windows) or Node.js.
+- **Node.js (for WebTorrent)**: Download from [nodejs.org](https://nodejs.org/).
+- **WebTorrent**: Open command prompt and run `npm install -g webtorrent-cli`
+- **MPV**: `winget install mpv`
+- **Prowlarr / Flaresolverr**: Best installed via Docker (see Docker section below) or via their Windows installers.
+
+### 🍎 macOS
+You will need [Homebrew](https://brew.sh/), the missing package manager for macOS. If you don't have it, run `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"` in your terminal.
+- **WebTorrent**: `npm install -g webtorrent-cli` (Requires Node.js: `brew install node`)
+- **MPV**: `brew install mpv`
+- **Prowlarr / Flaresolverr**: Run via Docker or `brew install --cask prowlarr`
+
+### 🐧 Linux (Debian/Ubuntu)
+Use your built-in package manager `apt` and Node.js.
+- **WebTorrent**: `npm install -g webtorrent-cli` (Requires Node.js: `sudo apt install nodejs npm`)
+- **MPV**: `sudo apt install mpv`
+- **Prowlarr / Flaresolverr**: Run via Docker.
+
+### 🐳 Docker (Prowlarr & Flaresolverr)
+The cleanest way to run Prowlarr and Flaresolverr is via Docker. You can use tools like [Docker Desktop](https://www.docker.com/products/docker-desktop/) or standard Docker Engine.
+Just grab their official images:
+- `lscr.io/linuxserver/prowlarr:latest`
+- `ghcr.io/flaresolverr/flaresolverr:latest`
+
+---
+
+## 🚀 App Installation & Setup
 
 ### Option 1: Download Pre-compiled Binaries
 You can find pre-compiled binaries on the [GitHub Releases](https://github.com/G00VIE/Goovie/releases) page.
@@ -41,32 +70,17 @@ cd goovie
 go build -o goovie ./cmd/goovie/
 ```
 
-## Configuration & Usage
+---
 
-Goovie requires access to your Prowlarr instance. You can configure it in three ways:
-1. **Environment Variables** (Highest priority, useful for remote instances)
-2. **Auto-Detection** (Goovie will automatically find your local Prowlarr `config.xml`)
-3. **In-App Prompt** (If not found, Goovie will ask for your API key in the terminal)
+## ⚙️ Configuration & API Keys
 
-### Using Environment Variables
+Goovie needs to talk to Prowlarr to search for movies/shows. Here's how it connects:
 
-### Linux / macOS
-```bash
-export PROWLARR_URL="http://127.0.0.1:9696"
-export PROWLARR_API_KEY="your_api_key_here"
-
-./goovie
-```
-*(Tip: Add these environment variables to your `~/.bashrc` or `~/.zshrc` so you don't have to type them every time.)*
-
-### Windows (PowerShell)
-```powershell
-$env:PROWLARR_URL="http://127.0.0.1:9696"
-$env:PROWLARR_API_KEY="your_api_key_here"
-
-.\goovie.exe
-```
-*(Tip: Add these to your Windows Environment Variables settings to persist them.)*
+1. **Auto-Detection (Magic! ✨)**: If you installed Prowlarr directly on your PC (Windows/Mac/Linux), Goovie will automatically find your `config.xml` file, extract the API key, and connect instantly! No manual setup needed.
+2. **In-App Prompt**: If you run Prowlarr via Docker, Goovie won't be able to read inside the Docker container. Instead, the first time you run Goovie, it will gracefully prompt you in the terminal to paste your **Prowlarr API Key**. It then saves this in a local `~/.goovie/config.json` file for future use.
+3. **Environment Variables**: For advanced users, you can bypass everything by setting environment variables manually:
+   - `PROWLARR_URL` (defaults to `http://localhost:9696`)
+   - `PROWLARR_API_KEY`
 
 ## How it works (The Workflow)
 1. **Search**: Enter the name of the movie or show into the beautiful terminal UI.
