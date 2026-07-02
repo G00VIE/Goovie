@@ -57,6 +57,7 @@ func tickLoadingText() tea.Cmd {
 const (
 	StateFrontPage       = iota
 	StateModeSelect
+	StateOriginSelect
 	StateAnimeTypeSelect
 	StateSearch
 	StateLoading
@@ -70,6 +71,8 @@ const (
 	StateAnikotoShowSelect
 	StateAnikotoEpSelect
 	StateAnikotoModeSelect
+	StateAsianShowSelect
+	StateAsianEpSelect
 
 	StateCheckingAPIKey
 	StateSetupAPIKey
@@ -100,6 +103,8 @@ type Model struct {
 	imgMovies       image.Image
 	imgTVShows      image.Image
 	imgAnime        image.Image
+	imgDexter       image.Image
+	imgAsian        image.Image
 
 	cinemetaMovies []prowlarr.CinemetaMovie
 	tvShows        []prowlarr.TVMazeShow
@@ -124,6 +129,12 @@ type Model struct {
 	anikotoWatchURL   string
 	anikotoSelectedEp player.EpisodeResult
 	anikotoMode       string
+
+	isAsian           bool
+	asianShows        []player.AsianShow
+	asianEpisodes     []player.AsianEpisode
+	selectedAsianShow player.AsianShow
+	asianWatchURL     string
 
 	setupInput     textinput.Model
 	loadingSpinner spinner.Model

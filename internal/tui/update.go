@@ -38,7 +38,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.Err
 			m.state = StateModeSelect
 		} else {
-			if m.isAnime {
+			if m.isAsian {
+				if m.isTVShow {
+					m.state = StateAsianEpSelect
+				} else {
+					m.state = StateAsianShowSelect
+				}
+			} else if m.isAnime {
 				m.state = StateAnikotoEpSelect
 			} else if m.isTVShow {
 				m.state = StateTVFileSelect
@@ -87,6 +93,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.activeWCell = bestW
+
 		return m, nil
 
 	case tea.KeyMsg:
@@ -133,6 +140,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == StateAnikotoModeSelect && m.cursor < 1 { // 0: Sub, 1: Dub
 				m.cursor++
 			}
+			if m.state == StateAsianShowSelect && m.cursor < len(m.asianShows)-1 {
+				m.cursor++
+			}
+			if m.state == StateOriginSelect && m.cursor < 1 { // 0: Western, 1: Asian
+				m.cursor++
+			}
+			if m.state == StateAsianEpSelect && m.cursor < len(m.asianEpisodes)-1 {
+				m.cursor++
+			}
 
 		case "left":
 			if m.state == StateModeSelect {
@@ -166,16 +182,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case StateModeSelect:
 				if m.cursor == 0 {
-					m.isTVShow, m.isAnime = false, false
-					m.state = StateSearch
+					m.isTVShow, m.isAnime, m.isAsian = false, false, false
+					m.state = StateOriginSelect
 				} else if m.cursor == 1 {
-					m.isTVShow, m.isAnime = true, false
-					m.state = StateSearch
+					m.isTVShow, m.isAnime, m.isAsian = true, false, false
+					m.state = StateOriginSelect
 				} else if m.cursor == 2 {
-					m.isAnime = true
+					m.isTVShow, m.isAnime, m.isAsian = false, true, false
 					m.state = StateAnimeTypeSelect
 				}
 				m.cursor = 0
+				return m, nil
+
+			case StateOriginSelect:
+				if m.cursor == 0 {
+					m.isAsian = false
+				} else {
+					m.isAsian = true
+				}
+				m.cursor = 0
+				m.state = StateSearch
 				return m, nil
 
 			case StateAnimeTypeSelect:
@@ -190,13 +216,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cursor = 0
 					m.state = StateLoading
 					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
-					if m.isAnime {
+					if m.isAsian {
+						return m, tea.Batch(m.loadingSpinner.Tick, player.FetchAsianShowsCmd(rawInput, m.isTVShow))
+					} else if m.isAnime {
 						return m, tea.Batch(m.loadingSpinner.Tick, prowlarr.FetchAnime(rawInput, m.animeTypeFilter))
 					} else if m.isTVShow {
 						return m, tea.Batch(m.loadingSpinner.Tick, prowlarr.FetchTVShows(rawInput))
 					} else {
 						return m, tea.Batch(m.loadingSpinner.Tick, prowlarr.FetchCinemetaMovies(rawInput))
 					}
+				}
+
+			case StateAsianShowSelect:
+				if len(m.asianShows) > 0 {
+					m.selectedAsianShow = m.asianShows[m.cursor]
+					m.cursor = 0
+					m.state = StateLoading
+					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+					return m, tea.Batch(m.loadingSpinner.Tick, player.FetchAsianEpisodesCmd(m.selectedAsianShow))
+				}
+
+			case StateAsianEpSelect:
+				if len(m.asianEpisodes) > 0 {
+					chosenEp := m.asianEpisodes[m.cursor]
+					m.cursor = 0
+					m.state = StateLoading
+					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+					return m, tea.Batch(m.loadingSpinner.Tick, player.FetchAsianStreamCmd(chosenEp.Link))
 				}
 
 			// --- Movie Logic Flow (Cinemeta) ---
@@ -345,24 +391,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.state = StateAnimeTypeSelect
 						m.cursor = 0
 					} else {
-						m.state = StateModeSelect
-						if m.isTVShow {
-							m.cursor = 1
-						} else {
-							m.cursor = 0
-						}
+						m.state = StateOriginSelect
+						m.cursor = 0
 					}
 				}
 			} else if m.state == StateTVFileSelect && len(m.tvFileSearch) > 0 {
 				m.tvFileSearch = m.tvFileSearch[:len(m.tvFileSearch)-1]
 				m = m.updateTVFileCursor()
-			} else if (m.state == StateMovieSelect || m.state == StateTVShowSelect || m.state == StateAnimeSelect || m.state == StateAnikotoShowSelect || m.state == StateAnikotoEpSelect) && len(m.dbMatchSearch) > 0 {
+			} else if (m.state == StateMovieSelect || m.state == StateTVShowSelect || m.state == StateAnimeSelect || m.state == StateAnikotoShowSelect || m.state == StateAnikotoEpSelect || m.state == StateAsianShowSelect || m.state == StateAsianEpSelect) && len(m.dbMatchSearch) > 0 {
 				m.dbMatchSearch = m.dbMatchSearch[:len(m.dbMatchSearch)-1]
 				m = m.updateDBMatchCursor()
 			} else {
 				m.dbMatchSearch = ""
 				m.tvFileSearch = ""
 				switch m.state {
+				case StateOriginSelect:
+					m.state = StateModeSelect
+					if m.isTVShow {
+						m.cursor = 1
+					} else {
+						m.cursor = 0
+					}
 				case StateAnimeTypeSelect:
 					m.state = StateModeSelect
 					m.cursor = 2
@@ -394,6 +443,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case StateAnikotoModeSelect:
 					m.state = StateAnikotoEpSelect
 					m.cursor = 0
+				case StateAsianShowSelect:
+					m.state = StateSearch
+					m.cursor = 0
+				case StateAsianEpSelect:
+					m.state = StateAsianShowSelect
+					m.cursor = 0
 				}
 			}
 		case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
@@ -402,7 +457,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.tvFileSearch += msg.String()
 					m = m.updateTVFileCursor()
 				}
-			} else if m.state == StateMovieSelect || m.state == StateTVShowSelect || m.state == StateAnimeSelect || m.state == StateAnikotoShowSelect || m.state == StateAnikotoEpSelect {
+			} else if m.state == StateMovieSelect || m.state == StateTVShowSelect || m.state == StateAnimeSelect || m.state == StateAnikotoShowSelect || m.state == StateAnikotoEpSelect || m.state == StateAsianShowSelect || m.state == StateAsianEpSelect {
 				if len(m.dbMatchSearch) < 4 {
 					m.dbMatchSearch += msg.String()
 					m = m.updateDBMatchCursor()
@@ -439,6 +494,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = StateLoadingTorrent
 					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
 		return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(proxyURL, "", msg.Referer, msg.SubtitleURL))
+
+	case player.AsianShowsMsg:
+		m.asianShows = msg
+		m.state = StateAsianShowSelect
+		m.cursor = 0
+		m.dbMatchSearch = ""
+		return m, nil
+
+	case player.AsianEpisodesMsg:
+		if msg.Type == "movie" {
+			m.state = StateLoading
+			m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+			return m, tea.Batch(m.loadingSpinner.Tick, player.FetchAsianStreamCmd(msg.WatchURL))
+		}
+		m.asianEpisodes = msg.Eps
+		m.asianWatchURL = msg.WatchURL
+		m.state = StateAsianEpSelect
+		m.cursor = 0
+		m.dbMatchSearch = ""
+		return m, nil
+
+	case player.AsianStreamMsg:
+		m.state = StateLoadingTorrent
+		m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+		return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(msg.StreamURL, "", msg.Referer, msg.SubtitleURL))
 
 	case prowlarr.TvShowsMsg:
 		m.tvShows = msg
@@ -612,6 +692,10 @@ func (m Model) updateDBMatchCursor() Model {
 			maxIdx = len(m.anikotoShows) - 1
 		} else if m.state == StateAnikotoEpSelect {
 			maxIdx = len(m.anikotoEpisodes) - 1
+		} else if m.state == StateAsianShowSelect {
+			maxIdx = len(m.asianShows) - 1
+		} else if m.state == StateAsianEpSelect {
+			maxIdx = len(m.asianEpisodes) - 1
 		}
 		
 		if target < 0 {

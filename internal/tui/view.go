@@ -419,6 +419,43 @@ func (m Model) View() string {
 		)
 
 		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, finalUI)
+	case StateOriginSelect:
+		width := m.terminalWidth
+		if width == 0 {
+			width = 80
+		}
+
+		rawName := "SELECT CONTENT TYPE"
+		spacedName := strings.Join(strings.Split(rawName, ""), " ")
+		
+		contentLen := len([]rune(spacedName))
+		boxWidth := contentLen + 4
+		if boxWidth < 36 {
+			boxWidth = 36
+		}
+		padAmt := boxWidth - contentLen
+		leftPad := padAmt / 2
+		rightPad := padAmt - leftPad
+		
+		paddedName := strings.Repeat(" ", leftPad) + spacedName + strings.Repeat(" ", rightPad)
+		
+		topBorder := "    ┌" + strings.Repeat("─", boxWidth) + "┐"
+		headerText := fmt.Sprintf("    │%s│   %d/2", paddedName, m.cursor+1)
+		bottomBorder := "    └" + strings.Repeat("─", boxWidth) + "┘"
+		
+		boxBlock := fmt.Sprintf("\n%s\n%s\n%s\n\n\n", topBorder, headerText, bottomBorder)
+		
+		opts := []string{"Western", "Asian"}
+		var optsUI string
+		for i, opt := range opts {
+			if i == m.cursor {
+				optsUI += fmt.Sprintf("      \033[47;30m • %s \033[0m\n", opt)
+			} else {
+				optsUI += fmt.Sprintf("         %s \n", opt)
+			}
+		}
+		
+		return boxBlock + optsUI
 	case StateAnimeTypeSelect:
 		rawName := "SELECT MEDIA TYPE"
 		spacedName := strings.Join(strings.Split(rawName, ""), " ")
@@ -451,10 +488,10 @@ func (m Model) View() string {
 		return boxBlock + optsUI
 	case StateSearch:
 		modeStr := "MOVIE"
-		if m.isTVShow {
+		if m.isAnime {
+			modeStr = "ANIME " + strings.ToUpper(m.animeTypeFilter)
+		} else if m.isTVShow {
 			modeStr = "TV SHOW"
-		} else if m.isAnime {
-			modeStr = "ANIME"
 		}
 
 		rawName := fmt.Sprintf("ENTER %s TITLE", modeStr)
@@ -653,6 +690,115 @@ func (m Model) View() string {
 		}
 		return boxBlock + optsUI
 
+	case StateAsianShowSelect:
+		rawName := "SELECT DRAMA RESULT :"
+		if len(m.dbMatchSearch) > 0 {
+			rawName += " " + m.dbMatchSearch
+		}
+		
+		spacedName := strings.Join(strings.Split(rawName, ""), " ")
+		
+		contentLen := len([]rune(spacedName)) + 2
+		boxWidth := contentLen + 4
+		if boxWidth < 36 {
+			boxWidth = 36
+		}
+		padAmt := boxWidth - contentLen
+		leftPad := padAmt / 2
+		rightPad := padAmt - leftPad
+		
+		paddedName := strings.Repeat(" ", leftPad) + spacedName + " \033[5m_\033[0m" + strings.Repeat(" ", rightPad)
+		
+		topBorder := "    ┌" + strings.Repeat("─", boxWidth) + "┐"
+		headerText := fmt.Sprintf("    │%s│   %d/%d", paddedName, m.cursor+1, len(m.asianShows))
+		bottomBorder := "    └" + strings.Repeat("─", boxWidth) + "┘"
+		
+		boxBlock := fmt.Sprintf("\n%s\n%s\n%s\n\n\n", topBorder, headerText, bottomBorder)
+		
+		maxGlobalRows := termHeight - 8
+		if maxGlobalRows < 5 {
+			maxGlobalRows = 5
+		}
+
+		start := m.cursor - (maxGlobalRows / 2)
+		if start < 0 {
+			start = 0
+		}
+		end := start + maxGlobalRows
+		if end > len(m.asianShows) {
+			end = len(m.asianShows)
+			start = end - maxGlobalRows
+			if start < 0 {
+				start = 0
+			}
+		}
+
+		var optsUI string
+		for i := start; i < end; i++ {
+			s := m.asianShows[i]
+			title := fmt.Sprintf("%d. %s (%s)", i+1, s.Title, strings.ToUpper(s.Type))
+			if i == m.cursor {
+				optsUI += fmt.Sprintf("      \033[47;30m • %s \033[0m\n", title)
+			} else {
+				optsUI += fmt.Sprintf("         %s \n", title)
+			}
+		}
+		return boxBlock + optsUI
+
+	case StateAsianEpSelect:
+		rawName := "SELECT EPISODE NUMBER :"
+		if len(m.dbMatchSearch) > 0 {
+			rawName += " " + m.dbMatchSearch
+		}
+		
+		spacedName := strings.Join(strings.Split(rawName, ""), " ")
+		
+		contentLen := len([]rune(spacedName)) + 2
+		boxWidth := contentLen + 4
+		if boxWidth < 36 {
+			boxWidth = 36
+		}
+		padAmt := boxWidth - contentLen
+		leftPad := padAmt / 2
+		rightPad := padAmt - leftPad
+		
+		paddedName := strings.Repeat(" ", leftPad) + spacedName + " \033[5m_\033[0m" + strings.Repeat(" ", rightPad)
+		
+		topBorder := "    ┌" + strings.Repeat("─", boxWidth) + "┐"
+		headerText := fmt.Sprintf("    │%s│   %d/%d", paddedName, m.cursor+1, len(m.asianEpisodes))
+		bottomBorder := "    └" + strings.Repeat("─", boxWidth) + "┘"
+		
+		boxBlock := fmt.Sprintf("\n%s\n%s\n%s\n\n\n", topBorder, headerText, bottomBorder)
+		
+		maxGlobalRows := termHeight - 8
+		if maxGlobalRows < 5 {
+			maxGlobalRows = 5
+		}
+
+		start := m.cursor - (maxGlobalRows / 2)
+		if start < 0 {
+			start = 0
+		}
+		end := start + maxGlobalRows
+		if end > len(m.asianEpisodes) {
+			end = len(m.asianEpisodes)
+			start = end - maxGlobalRows
+			if start < 0 {
+				start = 0
+			}
+		}
+
+		var optsUI string
+		for i := start; i < end; i++ {
+			ep := m.asianEpisodes[i]
+			title := fmt.Sprintf("%d. Episode %s", i+1, ep.Title)
+			if i == m.cursor {
+				optsUI += fmt.Sprintf("      \033[47;30m • %s \033[0m\n", title)
+			} else {
+				optsUI += fmt.Sprintf("         %s \n", title)
+			}
+		}
+		return boxBlock + optsUI
 
 	// Western Path Views
 	case StateTVShowSelect:
