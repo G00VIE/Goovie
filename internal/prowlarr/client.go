@@ -102,9 +102,28 @@ func FetchTVEpisodes(seasonID int) tea.Cmd {
 // --- Torrent Indexing (Prowlarr) ---
 func FetchIndexers() tea.Msg {
 	apiUrl := fmt.Sprintf("%s/api/v1/indexer?apikey=%s", config.ProwlarrURL, config.ProwlarrAPIKey)
-	resp, err := http.Get(apiUrl)
-	if err != nil || resp.StatusCode != 200 {
-		return ErrMsg{fmt.Errorf("unable to connect to local Prowlarr instance")}
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	var resp *http.Response
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		resp, err = client.Get(apiUrl)
+		if err == nil && resp.StatusCode == 200 {
+			break
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		if attempt == 0 {
+			time.Sleep(1 * time.Second)
+		}
+	}
+	if err != nil {
+		return ErrMsg{fmt.Errorf("unable to connect to local Prowlarr instance: %v", err)}
+	}
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		return ErrMsg{fmt.Errorf("unable to connect to local Prowlarr instance (status %d)", resp.StatusCode)}
 	}
 	defer resp.Body.Close()
 	var indexers []Indexer

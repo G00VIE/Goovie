@@ -77,13 +77,13 @@ go build -o goovie ./cmd/goovie/
 
 ## ⚙️ Configuration & API Keys
 
-Goovie needs to talk to Prowlarr to search for movies/shows. Here's how it connects:
+Goovie needs to talk to Prowlarr to search for movies/shows. Here is the priority list for how Goovie connects:
 
-1. **Auto-Detection (Magic! ✨)**: If you installed Prowlarr directly on your PC (Windows/Mac/Linux), Goovie will automatically find your `config.xml` file, extract the API key, and connect instantly! No manual setup needed.
-2. **In-App Prompt**: If you run Prowlarr via Docker, Goovie won't be able to read inside the Docker container. Instead, the first time you run Goovie, it will gracefully prompt you in the terminal to paste your **Prowlarr API Key**. It then saves this in a local `~/.goovie/config.json` file for future use.
-3. **Environment Variables**: For advanced users, you can bypass everything by setting environment variables manually:
+1. **Environment Variables**: Top priority. For advanced users, you can bypass everything by setting these variables permanently in your shell profiles (e.g., `~/.zshrc` or `~/.bashrc`):
    - `PROWLARR_URL` (defaults to `http://localhost:9696`)
    - `PROWLARR_API_KEY`
+2. **Goovie Config (`~/.goovie/config.json`)**: Second priority. If you run Prowlarr via Docker or remotely, Goovie won't be able to auto-detect the key. Instead, it will gracefully prompt you in the terminal to paste your **Prowlarr API Key** and save it in this local file for future use.
+3. **Auto-Detection (Magic! ✨)**: Fallback. If you installed Prowlarr directly on your PC (Windows/Mac/Linux), Goovie will automatically find your Prowlarr `config.xml` file, extract the API key, and connect instantly!
 
 ---
 

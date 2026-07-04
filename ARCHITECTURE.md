@@ -22,15 +22,17 @@ goovie/
 ### 1. Entry Point (`cmd/goovie/main.go`)
 - **Responsibility:** Wires the components together.
 - **Flow:** 
-  1. Loads configuration from `internal/config`.
-  2. Initializes the `prowlarr.Client`.
-  3. Instantiates the Bubble Tea TUI model via `tui.NewModel()`.
-  4. Runs the TUI loop.
-  5. Upon TUI exit, checks if a magnet link was selected and passes it to `player.Stream()`.
+  1. Invokes the Bubble Tea TUI model via `tui.NewModel()`.
+  2. The TUI initializes the configuration via `config.InitConfig()`.
+  3. Runs the TUI loop.
+  4. Upon TUI exit, handles the selected stream based on the selected mode (Movie/Show/Anime).
 
 ### 2. Configuration (`internal/config`)
-- **Responsibility:** Environment variable ingestion and default fallback.
-- **Variables:** Looks for `PROWLARR_URL` and `PROWLARR_API_KEY`.
+- **Responsibility:** Setup, persistence, and priority-based configuration ingestion.
+- **Flow (`InitConfig` priority list):** 
+  1. **Environment Variables:** Checks for `PROWLARR_URL` and `PROWLARR_API_KEY`.
+  2. **Saved Config (`LoadConfig`):** Reads the API key from `~/.goovie/config.json`.
+  3. **Auto-Detect (`AutoDetectAPIKey`):** Parses the local Prowlarr `config.xml` for an API key.
 
 ### 3. TUI State Machine (`internal/tui`)
 Uses the Elm architecture via Bubble Tea (Model, Update, View).
@@ -40,15 +42,15 @@ Uses the Elm architecture via Bubble Tea (Model, Update, View).
   - `StateList`: Displays results sorted by seeders.
 - **Concurrency:** TUI commands send asynchronous HTTP requests to the Prowlarr API using Bubble Tea's `tea.Cmd`.
 
-### 4. Prowlarr Client (`internal/prowlarr`)
-- **Responsibility:** Interacts with the local or remote Prowlarr instance.
+### 4. Search and Metadata Client (`internal/prowlarr`)
+- **Responsibility:** Interacts with Prowlarr, TVMaze, Cinemeta, and Jikan APIs for metadata and torrents.
 - **Flow:**
-  1. `FetchIndexersCmd`: Calls `/api/v1/indexer` to find all active indexers.
-  2. `FetchSingleIndexerCmd`: For each active indexer, calls `/api/v1/search` concurrently.
-  3. Converts raw JSON search results into unified `TorrentResult` models.
-  4. Parses `magnetUrl` or transforms `downloadUrl` into a valid proxy URL.
+  1. Fetches metadata depending on media type (`FetchCinemetaMovies`, `FetchTVShows`, `FetchAnime`).
+  2. `FetchIndexers`: Retrieves active indexers using `config.ProwlarrURL` and `config.ProwlarrAPIKey`.
+  3. `SearchSingleIndexer`: Searches for torrents with specific indexers.
+  4. `ResolveProxyLink`: Parses `InfoHash`, `magnetUrl` or resolves `downloadUrl` into a valid magnet URI.
 
 ### 5. Player logic (`internal/player`)
-- **Responsibility:** Handles the final torrent payload and launches external playback tools.
-- **URL Resolution:** If the selected link is an HTTP proxy URL (from Prowlarr), it intercepts HTTP 3xx redirects to capture raw `magnet:` URIs without Go's HTTP client throwing errors. If it receives a `.torrent` file payload, it writes it to `/tmp/stream.torrent`.
-- **Execution:** Spawns a child process calling `webtorrent <path> --mpv`. Standard output and errors are piped to the user's terminal.
+- **Responsibility:** Handles streaming from torrents, direct MP4/HLS streams (Anime/Asian Media), and launches external players.
+- **Anime / Asian Media Scrapers:** Custom logic scraping domains (e.g. `anikototv.to`, `kisskh.do`) for direct streaming links, using local HLS proxy `VibeProxy` if needed.
+- **Execution:** Spawns child processes depending on the OS (e.g., `LaunchPlayer` with `mpv` or `webtorrent`).
