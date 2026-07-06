@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"bubble-stream/internal/prowlarr"
 
@@ -49,15 +50,47 @@ type SearchResponse []struct {
 	EpisodesCount int    `json:"episodesCount"`
 }
 
+func cleanSlug(title string) string {
+	var sb strings.Builder
+	for _, r := range title {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			sb.WriteRune(r)
+		} else {
+			sb.WriteByte('-')
+		}
+	}
+	return sb.String()
+}
+
+func fetchJSON(url string) ([]byte, error) {
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+	}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP error: %d", resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
 func FetchAsianShowsCmd(query string, isTVShow bool) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := http.Get("https://kisskh.do/api/DramaList/Search?q=" + strings.ReplaceAll(query, " ", "+"))
+		body, err := fetchJSON("https://kisskh.do/api/DramaList/Search?q=" + strings.ReplaceAll(query, " ", "+"))
 		if err != nil {
 			return prowlarr.ErrMsg{Err: fmt.Errorf("kisskh search failed: %v", err)}
 		}
-		defer resp.Body.Close()
-
-		body, _ := io.ReadAll(resp.Body)
 		var searchRes SearchResponse
 		err = json.Unmarshal(body, &searchRes)
 		if err != nil {
@@ -120,13 +153,10 @@ type DramaResponse struct {
 
 func FetchAsianEpisodesCmd(show AsianShow) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := http.Get(fmt.Sprintf("https://kisskh.do/api/DramaList/Drama/%s?isq=false", show.ID))
+		body, err := fetchJSON(fmt.Sprintf("https://kisskh.do/api/DramaList/Drama/%s?isq=false", show.ID))
 		if err != nil {
 			return prowlarr.ErrMsg{Err: fmt.Errorf("failed to fetch details from kisskh")}
 		}
-		defer resp.Body.Close()
-
-		body, _ := io.ReadAll(resp.Body)
 		var dramaRes DramaResponse
 		err = json.Unmarshal(body, &dramaRes)
 		if err != nil {
@@ -146,7 +176,7 @@ func FetchAsianEpisodesCmd(show AsianShow) tea.Cmd {
 			titleStr := fmt.Sprintf("%g", ep.Number)
 			episodes = append(episodes, AsianEpisode{
 				Title: titleStr,
-				Link:  fmt.Sprintf("https://kisskh.do/Drama/%s/Episode-%g?id=%s&ep=%d", strings.ReplaceAll(show.Title, " ", "-"), ep.Number, show.ID, ep.ID),
+				Link:  fmt.Sprintf("https://kisskh.do/Drama/%s/Episode-%g?id=%s&ep=%d", cleanSlug(show.Title), ep.Number, show.ID, ep.ID),
 			})
 		}
 
