@@ -42,6 +42,7 @@ jobs:
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
         run: |
           # Build with ldflags to strip debug info and reduce binary size
           go build -ldflags="-s -w" -o build/goovie-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }} ./cmd/goovie/
