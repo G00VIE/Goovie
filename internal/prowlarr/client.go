@@ -1,6 +1,7 @@
 package prowlarr
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -223,31 +224,105 @@ func FetchTVFiles(magnet string) tea.Cmd {
 	}
 }
 
+type AniListResponse struct {
+	Data struct {
+		Page struct {
+			Media []struct {
+				ID    int `json:"id"`
+				Title struct {
+					Romaji  string `json:"romaji"`
+					English string `json:"english"`
+					Native  string `json:"native"`
+				} `json:"title"`
+				Type       string `json:"type"`
+				Format     string `json:"format"`
+				SeasonYear int    `json:"seasonYear"`
+				Episodes   int    `json:"episodes"`
+			} `json:"media"`
+		} `json:"Page"`
+	} `json:"data"`
+}
+
 func FetchAnime(query string, animeType string) tea.Cmd {
 	return func() tea.Msg {
-		safeQuery := url.QueryEscape(query)
-		targetUrl := fmt.Sprintf("https://api.jikan.moe/v4/anime?q=%s&sfw=true", safeQuery)
-
-		if animeType != "All" && animeType != "" {
-			apiType := strings.ToLower(animeType)
-			if apiType == "series" {
-				apiType = "tv"
-			} else if apiType == "movies" {
-				apiType = "movie"
+		queryStr := `
+		query ($search: String, $format: MediaFormat) {
+			Page(page: 1, perPage: 10) {
+				media(search: $search, type: ANIME, format: $format) {
+					id
+					title {
+						romaji
+						english
+						native
+					}
+					type
+					format
+					seasonYear
+					episodes
+				}
 			}
-			targetUrl += fmt.Sprintf("&type=%s", apiType)
+		}
+		`
+
+		variables := map[string]interface{}{
+			"search": query,
 		}
 
-		resp, err := http.Get(targetUrl)
+		if animeType != "All" && animeType != "" {
+			apiType := strings.ToUpper(animeType)
+			if apiType == "SERIES" {
+				apiType = "TV"
+			} else if apiType == "MOVIES" {
+				apiType = "MOVIE"
+			}
+			variables["format"] = apiType
+		}
+
+		requestBody := map[string]interface{}{
+			"query":     queryStr,
+			"variables": variables,
+		}
+		
+		jsonData, err := json.Marshal(requestBody)
+		if err != nil {
+			return ErrMsg{fmt.Errorf("failed to prepare AniList request")}
+		}
+
+		req, err := http.NewRequest("POST", "https://graphql.anilist.co", bytes.NewBuffer(jsonData))
+		if err != nil {
+			return ErrMsg{fmt.Errorf("failed to create AniList request")}
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
 		if err != nil || resp.StatusCode != 200 {
-			return ErrMsg{fmt.Errorf("Jikan API anime lookup failed")}
+			return ErrMsg{fmt.Errorf("AniList API lookup failed")}
 		}
 		defer resp.Body.Close()
 
-		var results JikanResponse
-		json.NewDecoder(resp.Body).Decode(&results)
+		var results AniListResponse
+		if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+			return ErrMsg{fmt.Errorf("failed to decode AniList response")}
+		}
 
-		return AnimeMsg(results.Data)
+		var jikanAnimes []JikanAnime
+		for _, m := range results.Data.Page.Media {
+			title := m.Title.English
+			if title == "" {
+				title = m.Title.Romaji
+			}
+			jikanAnimes = append(jikanAnimes, JikanAnime{
+				MalID:    m.ID, // Using AniList ID
+				Title:    title,
+				Type:     m.Format,
+				Year:     m.SeasonYear,
+				Episodes: m.Episodes,
+			})
+		}
+
+		return AnimeMsg(jikanAnimes)
 	}
 }
 
