@@ -208,11 +208,20 @@ func resolveStream(linkID string, watchURL string, mode string) (AnikotoStreamMs
 	}
 
 	var subtitleURL string
+	var fallbackSubtitle string
 	for _, track := range finalRes.Tracks {
 		if track.Kind == "captions" {
-			subtitleURL = track.File
-			break
+			if fallbackSubtitle == "" {
+				fallbackSubtitle = track.File
+			}
+			if strings.Contains(strings.ToLower(track.Label), "eng") {
+				subtitleURL = track.File
+				break
+			}
 		}
+	}
+	if subtitleURL == "" {
+		subtitleURL = fallbackSubtitle
 	}
 
 	referrerBase := parsedEmbedURL.Scheme + "://" + parsedEmbedURL.Host + "/"
