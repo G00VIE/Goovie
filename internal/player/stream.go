@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -249,6 +250,8 @@ func (p *VibeProxy) serveSegment(w http.ResponseWriter, r *http.Request, session
 
 func LaunchPlayer(target string, fileIndex string, referer string, subtitleURL string) tea.Cmd {
 	var c *exec.Cmd
+	var tempDir string
+
 	if strings.HasPrefix(target, "http") {
 		// Anime path uses pure mpv with optional referer and subtitle
 		var args []string
@@ -262,6 +265,8 @@ func LaunchPlayer(target string, fileIndex string, referer string, subtitleURL s
 		c = exec.Command("mpv", args...)
 	} else {
 		// Western path uses webtorrent pipeline
+		tempDir, _ = os.MkdirTemp("", "goovie_torrent_*")
+		
 		if runtime.GOOS == "windows" {
 			c = exec.Command("cmd")
 			var rawCmd string
@@ -270,13 +275,21 @@ func LaunchPlayer(target string, fileIndex string, referer string, subtitleURL s
 			} else {
 				rawCmd = fmt.Sprintf(`cmd /c webtorrent.cmd "%s" --mpv`, target)
 			}
+			if tempDir != "" {
+				rawCmd += fmt.Sprintf(` --out "%s"`, tempDir)
+			}
 			sysutil.SetCmdLine(c, rawCmd)
 		} else {
+			var args []string
+			args = append(args, target)
 			if fileIndex != "" {
-				c = exec.Command("webtorrent", target, "--select", fileIndex, "--mpv")
-			} else {
-				c = exec.Command("webtorrent", target, "--mpv")
+				args = append(args, "--select", fileIndex)
 			}
+			args = append(args, "--mpv")
+			if tempDir != "" {
+				args = append(args, "--out", tempDir)
+			}
+			c = exec.Command("webtorrent", args...)
 		}
 	}
 
@@ -285,6 +298,9 @@ func LaunchPlayer(target string, fileIndex string, referer string, subtitleURL s
 
 	return func() tea.Msg {
 		err := c.Run()
+		if tempDir != "" {
+			os.RemoveAll(tempDir)
+		}
 		return PlayerFinishedMsg{Err: err}
 	}
 }
