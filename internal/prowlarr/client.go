@@ -246,9 +246,9 @@ type AniListResponse struct {
 func FetchAnime(query string, animeType string) tea.Cmd {
 	return func() tea.Msg {
 		queryStr := `
-		query ($search: String, $format: MediaFormat) {
+		query ($search: String, $formatIn: [MediaFormat]) {
 			Page(page: 1, perPage: 10) {
-				media(search: $search, type: ANIME, format: $format) {
+				media(search: $search, type: ANIME, format_in: $formatIn) {
 					id
 					title {
 						romaji
@@ -271,11 +271,12 @@ func FetchAnime(query string, animeType string) tea.Cmd {
 		if animeType != "All" && animeType != "" {
 			apiType := strings.ToUpper(animeType)
 			if apiType == "SERIES" {
-				apiType = "TV"
+				variables["formatIn"] = []string{"TV", "TV_SHORT", "ONA"}
 			} else if apiType == "MOVIES" {
-				apiType = "MOVIE"
+				variables["formatIn"] = []string{"MOVIE"}
+			} else {
+				variables["formatIn"] = []string{apiType}
 			}
-			variables["format"] = apiType
 		}
 
 		requestBody := map[string]interface{}{
