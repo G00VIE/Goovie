@@ -4,20 +4,47 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"bubble-stream/internal/config"
 	"github.com/go-rod/rod/lib/launcher"
 )
 
+// FindBrowserExecutable checks system PATH, standard system directories,
+// and rod's downloaded browser cache directory (~/.cache/rod/browser/ or %APPDATA%/rod/browser).
+func FindBrowserExecutable() (string, bool) {
+	// 1. Check system PATH and standard locations (Edge / Chrome / Chromium)
+	if p, has := launcher.LookPath(); has {
+		return p, true
+	}
+
+	// 2. Check Rod's downloaded browser cache
+	b := launcher.NewBrowser()
+	binPath := b.BinPath()
+	if fi, err := os.Stat(binPath); err == nil && !fi.IsDir() {
+		return binPath, true
+	}
+
+	altPath := filepath.Join(b.Dir(), "chrome-linux", "chrome")
+	if fi, err := os.Stat(altPath); err == nil && !fi.IsDir() {
+		return altPath, true
+	}
+
+	return "", false
+}
+
 // SystemHealth tracks availability of runtime dependencies
 type SystemHealth struct {
-	HasMPV      bool
-	HasBrowser  bool
-	HasProwlarr bool
-	MPVPath     string
-	BrowserPath string
-	ProwlarrURL string
+	HasMPV          bool
+	HasBrowser      bool
+	HasProwlarr     bool
+	HasFlareSolverr bool
+	MPVPath         string
+	BrowserPath     string
+	ProwlarrURL     string
+	FlareSolverrURL string
 }
 
 // AllReady returns true if all tools needed for every media type are present
@@ -50,8 +77,8 @@ func CheckSystemHealth() SystemHealth {
 		health.MPVPath = mpvPath
 	}
 
-	// 2. Check Browser for Rod (Edge / Chrome / Chromium)
-	if browserPath, has := launcher.LookPath(); has {
+	// 2. Check Browser for Rod (Edge / Chrome / Chromium / Rod-downloaded Chromium)
+	if browserPath, has := FindBrowserExecutable(); has {
 		health.HasBrowser = true
 		health.BrowserPath = browserPath
 	}
@@ -108,6 +135,10 @@ func CheckSystemHealth() SystemHealth {
 			}
 		}
 	}
+
+	// 5. Check FlareSolverr (Cloudflare bypass proxy)
+	health.FlareSolverrURL = config.FlareSolverrURL
+	health.HasFlareSolverr = IsFlareSolverrRunning()
 
 	return health
 }

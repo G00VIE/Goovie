@@ -715,14 +715,14 @@ func TestSystemHealthMsg_Transitions(t *testing.T) {
 		t.Errorf("expected StateFrontPage when all ready, got: %v", mod1.state)
 	}
 
-	// When missing, transitions to StateInstallingDependencies (autonomous setup)
+	// When missing, transitions to StateSystemHealthCheck (prompt user with 1-click install or continue)
 	m2, _ := m.Update(SystemHealthMsg{Health: sysutil.SystemHealth{
 		HasMPV:      false,
 		HasBrowser:  true,
 		HasProwlarr: false,
 	}})
 	mod2 := m2.(Model)
-	if mod2.state != StateInstallingDependencies {
-		t.Errorf("expected StateInstallingDependencies when missing deps, got: %v", mod2.state)
+	if mod2.state != StateSystemHealthCheck {
+		t.Errorf("expected StateSystemHealthCheck when missing deps, got: %v", mod2.state)
 	}
 }

@@ -37,12 +37,20 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: 'stable'
+          cache: true
+
+      - name: Pre-download Dependencies
+        run: |
+          for i in 1 2 3 4 5; do
+            go mod download && break || (echo "Retrying download ($i)..." && sleep 3)
+          done
 
       - name: Build Binary
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
+          GODEBUG: http2client=0
         run: |
           # Build with ldflags to strip debug info and reduce binary size
           go build -ldflags="-s -w" -o build/goovie-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }} ./cmd/goovie/
