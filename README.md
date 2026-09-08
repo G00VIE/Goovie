@@ -65,7 +65,7 @@ Zero Node.js. Zero WebTorrent CLI bloat. Pure compiled Go power. 🏎️💨
 4. Press **`1`**:
    - Silently downloads and installs `mpv` and `Prowlarr` via Windows Package Manager (`winget`).
    - Pre-seeds Prowlarr configuration (`<AuthenticationMethod>None</AuthenticationMethod>`) so you **never have to deal with browser login wizards**.
-   - Auto-injects top public indexers (**1337x**, **YTS**, **EZTV**, **TorrentGalaxy**, **LimeTorrents**).
+   - Auto-injects top public indexers (**YTS**, **The Pirate Bay**, **LimeTorrents**, **EZTV**, **TorrentGalaxy**).
    - Done! You're ready to stream anything in existence. 🥂
 
 ---

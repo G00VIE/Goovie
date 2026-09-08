@@ -223,8 +223,8 @@ func ConfigureTopIndexers(apiKey string) error {
 		return fmt.Errorf("no indexer schemas available from Prowlarr")
 	}
 
-	// Target top public indexers (Movies, TV, Anime)
-	targets := []string{"yts", "thepiratebay", "limetorrents", "eztv", "torrentgalaxy", "1337x", "kickasstorrents", "nyaasi"}
+	// Target top public indexers (Movies & TV)
+	targets := []string{"yts", "thepiratebay", "limetorrents", "eztv", "torrentgalaxy"}
 
 	for _, target := range targets {
 		if existingNames[target] {
@@ -352,7 +352,7 @@ func AutoInstallDependencies(onProgress func(step string)) error {
 
 	// 5. Configure top indexers via API
 	if apiKey != "" {
-		onProgress("Configuring top indexers (YTS, The Pirate Bay, LimeTorrents, EZTV, 1337x)...")
+		onProgress("Configuring top indexers (YTS, The Pirate Bay, LimeTorrents, EZTV, TorrentGalaxy)...")
 		if err := ConfigureTopIndexers(apiKey); err != nil {
 			time.Sleep(2 * time.Second)
 			_ = ConfigureTopIndexers(apiKey)
