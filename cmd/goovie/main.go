@@ -3,11 +3,15 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"bubble-stream/internal/assets"
+	"bubble-stream/internal/bittorrent"
 	"bubble-stream/internal/player"
+	"bubble-stream/internal/sysutil"
 	"bubble-stream/internal/tui"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -18,6 +22,23 @@ import (
 )
 
 func main() {
+	sysutil.PurgeAllTempData()
+	defer func() {
+		bittorrent.CloseGlobalEngine()
+		player.CloseProxy()
+		sysutil.PurgeAllTempData()
+	}()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		bittorrent.CloseGlobalEngine()
+		player.CloseProxy()
+		sysutil.PurgeAllTempData()
+		os.Exit(0)
+	}()
+
 	player.InitProxy()
 	ti := textinput.New()
 	ti.Placeholder = "Search query..."
@@ -195,6 +216,9 @@ func main() {
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Runtime structural panic: %v\n", err)
+		bittorrent.CloseGlobalEngine()
+		player.CloseProxy()
+		sysutil.PurgeAllTempData()
 		os.Exit(1)
 	}
 }

@@ -225,6 +225,13 @@ func resolveStream(linkID string, watchURL string, mode string) (AnikotoStreamMs
 	}
 
 	referrerBase := parsedEmbedURL.Scheme + "://" + parsedEmbedURL.Host + "/"
+
+	// Verify that the master playlist is accessible
+	masterBytes, err := fetchHTTPWithReferer(client, finalRes.Sources.File, referrerBase)
+	if err != nil || len(masterBytes) == 0 {
+		return AnikotoStreamMsg{}, fmt.Errorf("provider stream master playlist unreachable: %v", err)
+	}
+
 	return AnikotoStreamMsg{M3u8URL: finalRes.Sources.File, Referer: referrerBase, SubtitleURL: subtitleURL}, nil
 }
 
@@ -258,41 +265,60 @@ func RaceAnikotoStreamsCmd(epToken string, mode string, watchURL string) tea.Cmd
 			return prowlarr.ErrMsg{Err: fmt.Errorf("no servers found for %s mode", mode)}
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		resultChan := make(chan AnikotoStreamMsg, len(serverMatches))
-		
-		var wg sync.WaitGroup
+		var highPriority []string
+		var fallback []string
 		for _, m := range serverMatches {
-			wg.Add(1)
-			go func(linkID string) {
-				defer wg.Done()
-				if ctx.Err() != nil {
-					return
-				}
-				res, err := resolveStream(linkID, watchURL, mode)
-				if err == nil {
-					select {
-					case resultChan <- res:
-					case <-ctx.Done():
+			name := strings.ToLower(m[2])
+			if strings.Contains(name, "vidstream") || strings.Contains(name, "hd") || strings.Contains(name, "mega") {
+				highPriority = append(highPriority, m[1])
+			} else {
+				fallback = append(fallback, m[1])
+			}
+		}
+
+		raceServers := func(linkIDs []string) (AnikotoStreamMsg, bool) {
+			if len(linkIDs) == 0 {
+				return AnikotoStreamMsg{}, false
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			resultChan := make(chan AnikotoStreamMsg, len(linkIDs))
+			var wg sync.WaitGroup
+			for _, linkID := range linkIDs {
+				wg.Add(1)
+				go func(id string) {
+					defer wg.Done()
+					if ctx.Err() != nil {
+						return
 					}
-				}
-			}(m[1])
+					res, err := resolveStream(id, watchURL, mode)
+					if err == nil {
+						select {
+						case resultChan <- res:
+							cancel()
+						case <-ctx.Done():
+						}
+					}
+				}(linkID)
+			}
+
+			go func() {
+				wg.Wait()
+				close(resultChan)
+			}()
+
+			res, ok := <-resultChan
+			return res, ok
 		}
 
-		go func() {
-			wg.Wait()
-			close(resultChan)
-		}()
-
-		res, ok := <-resultChan
-		if !ok {
-			return prowlarr.ErrMsg{Err: fmt.Errorf("all providers failed to resolve a stream")}
+		if res, ok := raceServers(highPriority); ok {
+			return res
 		}
-		
-		cancel()
-		
-		return res
+		if res, ok := raceServers(fallback); ok {
+			return res
+		}
+
+		return prowlarr.ErrMsg{Err: fmt.Errorf("all providers failed to resolve a stream")}
 	}
 }

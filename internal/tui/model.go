@@ -8,6 +8,7 @@ import (
 	"bubble-stream/internal/config"
 	"bubble-stream/internal/player"
 	"bubble-stream/internal/prowlarr"
+	"bubble-stream/internal/sysutil"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -77,10 +78,24 @@ const (
 	StateCheckingAPIKey
 	StateSetupAPIKey
 	StateLoadingTorrent
+	StateSystemHealthCheck
+	StateInstallingDependencies
 )
 
 type APIKeyStatusMsg struct {
 	Found bool
+}
+
+type SystemHealthMsg struct {
+	Health sysutil.SystemHealth
+}
+
+type InstallProgressMsg struct {
+	Step string
+}
+
+type InstallFinishedMsg struct {
+	Err error
 }
 
 type renderRow struct {
@@ -111,6 +126,7 @@ type Model struct {
 	tvSeasons      []prowlarr.TVMazeSeason
 	tvEpisodes       []prowlarr.TVMazeEpisode
 	tvFiles          []string
+	tvRawFiles       []string
 	tvFileSearch     string
 	selectedShow     string
 	selectedSeason   int
@@ -146,16 +162,23 @@ type Model struct {
 	cacheAnime       map[int]map[bool]string
 	activeWCell      int
 	loadingPhrase    string
+
+	health          sysutil.SystemHealth
+	installProgress string
+	installErr      error
+	installComplete bool
+	installChan     chan string
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, m.loadingSpinner.Tick, checkAPIKeyCmd(), tickLoadingText())
+	return tea.Batch(textinput.Blink, m.loadingSpinner.Tick, checkSystemHealthCmd(), tickLoadingText())
 }
 
-func checkAPIKeyCmd() tea.Cmd {
+func checkSystemHealthCmd() tea.Cmd {
 	return func() tea.Msg {
-		found := config.InitConfig()
-		return APIKeyStatusMsg{Found: found}
+		config.InitConfig()
+		health := sysutil.CheckSystemHealth()
+		return SystemHealthMsg{Health: health}
 	}
 }
 

@@ -11,8 +11,8 @@ import (
 	"bubble-stream/internal/config"
 	"bubble-stream/internal/player"
 	"bubble-stream/internal/prowlarr"
+	"bubble-stream/internal/sysutil"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -34,6 +34,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickLoadingText()
 
 	case player.PlayerFinishedMsg:
+		sysutil.PurgeAllTempData()
 		if msg.Err != nil {
 			m.err = msg.Err
 			m.state = StateModeSelect
@@ -54,14 +55,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case APIKeyStatusMsg:
-		if msg.Found {
+	case SystemHealthMsg:
+		m.health = msg.Health
+		if m.health.AllReady() {
 			m.state = StateFrontPage
 			return m, nil
 		}
-		m.state = StateSetupAPIKey
-		m.setupInput.Focus()
-		return m, textinput.Blink
+		m.state = StateSystemHealthCheck
+		return m, nil
+
+	case InstallProgressMsg:
+		m.installProgress = msg.Step
+		if m.installChan != nil {
+			return m, waitForInstallProgress(m.installChan)
+		}
+		return m, nil
+
+	case InstallFinishedMsg:
+		m.installComplete = true
+		m.installErr = msg.Err
+		m.health = sysutil.CheckSystemHealth()
+		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.terminalHeight = msg.Height
@@ -98,8 +112,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
 			return m, tea.Quit
+		case "esc":
+			if m.state == StateSystemHealthCheck {
+				m.state = StateFrontPage
+				return m, nil
+			}
+			return m, tea.Quit
+		case "q":
+			if m.state == StateSystemHealthCheck || m.state == StateModeSelect || m.state == StateFrontPage {
+				return m, tea.Quit
+			}
+		case "s", "S":
+			if m.state == StateModeSelect || m.state == StateFrontPage {
+				m.health = sysutil.CheckSystemHealth()
+				m.state = StateSystemHealthCheck
+				return m, nil
+			}
 		case "up":
 			if m.state != StateModeSelect && m.cursor > 0 {
 				m.cursor--
@@ -168,6 +198,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			switch m.state {
+			case StateSystemHealthCheck:
+				m.state = StateFrontPage
+				return m, nil
+
+			case StateInstallingDependencies:
+				if m.installComplete {
+					m.state = StateFrontPage
+					return m, nil
+				}
+				return m, nil
+
 			case StateSetupAPIKey:
 				key := strings.TrimSpace(m.setupInput.Value())
 				if key != "" {
@@ -196,8 +237,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case StateOriginSelect:
 				if m.cursor == 0 {
+					if !m.health.HasProwlarr {
+						m.err = fmt.Errorf("Western Media is a NO GO without Prowlarr. Press [s] on main menu to auto-install")
+						m.state = StateModeSelect
+						return m, nil
+					}
 					m.isAsian = false
 				} else {
+					if !m.health.HasBrowser {
+						m.err = fmt.Errorf("K-Drama requires Edge or Chrome installed. Press [s] on main menu to auto-install")
+						m.state = StateModeSelect
+						return m, nil
+					}
 					m.isAsian = true
 				}
 				m.cursor = 0
@@ -452,7 +503,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
-			if m.state == StateTVFileSelect {
+			if m.state == StateSystemHealthCheck {
+				if msg.String() == "1" {
+					m.state = StateInstallingDependencies
+					m.installProgress = "Starting auto-installer..."
+					m.installErr = nil
+					m.installComplete = false
+					m.installChan = make(chan string, 10)
+					return m, tea.Batch(m.loadingSpinner.Tick, startAutoInstallCmd(m.installChan), waitForInstallProgress(m.installChan))
+				} else if msg.String() == "2" {
+					m.state = StateFrontPage
+					return m, nil
+				}
+			} else if m.state == StateInstallingDependencies && m.installComplete {
+				if msg.String() == "2" {
+					m.state = StateFrontPage
+					return m, nil
+				}
+			} else if m.state == StateTVFileSelect {
 				if len(m.tvFileSearch) < 4 { // Prevent infinite typing
 					m.tvFileSearch += msg.String()
 					m = m.updateTVFileCursor()
@@ -532,15 +600,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case prowlarr.TvEpisodesMsg:
 		m.tvEpisodes = msg
-		if len(m.tvFiles) > 0 {
-			m.tvFiles = simplifyTVFiles(m.tvFiles, m.tvEpisodes)
+		if len(m.tvRawFiles) > 0 {
+			m.tvFiles = simplifyTVFiles(m.tvRawFiles, m.tvEpisodes)
 		}
 		return m, nil
 	case prowlarr.TvFilesMsg:
-		m.tvFiles = msg
-		if len(m.tvEpisodes) > 0 {
-			m.tvFiles = simplifyTVFiles(m.tvFiles, m.tvEpisodes)
-		}
+		m.tvRawFiles = msg
+		m.tvFiles = simplifyTVFiles(msg, m.tvEpisodes)
 		m.state = StateTVFileSelect
 		m.cursor = 0
 		return m, nil
@@ -627,35 +693,138 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func extractEpisodeNum(f string) int {
+	re := regexp.MustCompile(`(?i)(?:s\d{1,2}[. _-]*e|\d{1,2}x|episode[. _-]*|ep[. _-]*|e)\s*0*(\d{1,3})\b`)
+	match := re.FindStringSubmatch(f)
+	if len(match) > 1 {
+		if n, err := strconv.Atoi(match[1]); err == nil {
+			return n
+		}
+	}
+	return 999999
+}
+
+func cleanEpisodeNameFromFilename(filename string) string {
+	base := strings.TrimSpace(filename)
+	if strings.HasSuffix(base, ")") {
+		if idx := strings.LastIndex(base, "("); idx > 0 {
+			base = strings.TrimSpace(base[:idx])
+		}
+	}
+	if idx := strings.LastIndexAny(base, "/\\"); idx >= 0 {
+		base = base[idx+1:]
+	}
+	if idx := strings.LastIndex(base, "."); idx >= 0 {
+		base = base[:idx]
+	}
+
+	reMarker := regexp.MustCompile(`(?i)(?:s\d{1,2}[. _-]*e\d{1,3}|\b\d{1,2}x\d{1,3}\b|episode[. _-]*\d{1,3}|ep[. _-]*\d{1,3}|\be\d{1,3}\b)`)
+	loc := reMarker.FindStringIndex(base)
+	titlePart := base
+	if loc != nil {
+		titlePart = base[loc[1]:]
+	}
+
+	reBracket := regexp.MustCompile(`(?i)\[[^\]]*\]|\([^\)]*\)`)
+	titlePart = reBracket.ReplaceAllString(titlePart, " ")
+	titlePart = strings.ReplaceAll(titlePart, ".", " ")
+	titlePart = strings.ReplaceAll(titlePart, "_", " ")
+
+	reCutoff := regexp.MustCompile(`(?i)\b(?:1080p|720p|4k|2160p|480p|bluray|blu-ray|bdrip|brrip|web-dl|webdl|webrip|web|hdtv|hdrip|dvdrip|dvd|x265|x264|hevc|h264|h265|avc|10bit|8bit|aac|ac3|dts|dts-hd|truehd|ddp|dd5\.1|dual|multi|esub|sub|repack|proper|remux|fs\d+|joy|rovers|qxr|utr|rartv|eztv|yts)\b`)
+	if cutLoc := reCutoff.FindStringIndex(titlePart); cutLoc != nil {
+		titlePart = titlePart[:cutLoc[0]]
+	}
+
+	titlePart = strings.Trim(titlePart, " -_:")
+	return strings.Join(strings.Fields(titlePart), " ")
+}
+
+func isCommentaryOrExtra(filename string) bool {
+	re := regexp.MustCompile(`(?i)\b(?:commentary|audio[._ -]*commentary)\b|\([cC]\)(?:\.[a-zA-Z0-9]+)?$|\([cC]\)\s|\([cC]\)`)
+	return re.MatchString(filename)
+}
+
 func simplifyTVFiles(files []string, episodes []prowlarr.TVMazeEpisode) []string {
 	var simplified []string
 	epMap := make(map[int]string)
 	for _, ep := range episodes {
-		epMap[ep.Number] = ep.Name
+		if ep.Name != "" {
+			epMap[ep.Number] = ep.Name
+		}
 	}
 
-	re := regexp.MustCompile(`(?i)(?:s\d{1,2}e|e|ep)\s*0*(\d{1,3})\b`)
+	re := regexp.MustCompile(`(?i)(?:s\d{1,2}[. _-]*e|\b\d{1,2}x|episode[. _-]*|ep[. _-]*|\be)\s*0*(\d{1,3})\b`)
+
+	seenEpisodes := make(map[int]int)
+	seenRawFilenames := make(map[int]string)
+	var matchedEpisodes []string
+	var nonMatched []string
 
 	for _, f := range files {
-		fields := strings.SplitN(f, " ", 2)
-		if len(fields) != 2 {
-			simplified = append(simplified, f)
+		fields := strings.Fields(f)
+		if len(fields) < 2 {
 			continue
 		}
 		idxStr := fields[0]
-		filename := fields[1]
+		filename := strings.TrimSpace(f[len(idxStr):])
+
+		if prowlarr.IsJunkOrNonVideo(filename) {
+			continue
+		}
 
 		match := re.FindStringSubmatch(filename)
 		if len(match) > 1 {
 			epNum, _ := strconv.Atoi(match[1])
-			if title, ok := epMap[epNum]; ok {
-				newTitle := fmt.Sprintf("%s Episode %d: %s", idxStr, epNum, title)
-				simplified = append(simplified, newTitle)
+			title, ok := epMap[epNum]
+			if !ok || title == "" {
+				title = cleanEpisodeNameFromFilename(filename)
+			}
+			var entry string
+			if title != "" {
+				entry = fmt.Sprintf("%s Ep %02d %s", idxStr, epNum, title)
+			} else {
+				entry = fmt.Sprintf("%s Ep %02d", idxStr, epNum)
+			}
+
+			if existingIdx, exists := seenEpisodes[epNum]; exists {
+				prevRaw := seenRawFilenames[epNum]
+				if isCommentaryOrExtra(prevRaw) && !isCommentaryOrExtra(filename) {
+					matchedEpisodes[existingIdx] = entry
+					seenRawFilenames[epNum] = filename
+				}
 				continue
 			}
+
+			seenEpisodes[epNum] = len(matchedEpisodes)
+			seenRawFilenames[epNum] = filename
+			matchedEpisodes = append(matchedEpisodes, entry)
+			continue
 		}
-		simplified = append(simplified, f)
+
+		nonMatched = append(nonMatched, f)
 	}
+
+	if len(matchedEpisodes) > 0 {
+		simplified = matchedEpisodes
+	} else {
+		seenNM := make(map[string]bool)
+		for _, nm := range nonMatched {
+			if !seenNM[nm] {
+				seenNM[nm] = true
+				simplified = append(simplified, nm)
+			}
+		}
+	}
+
+	sort.SliceStable(simplified, func(i, j int) bool {
+		epI := extractEpisodeNum(simplified[i])
+		epJ := extractEpisodeNum(simplified[j])
+		if epI != epJ {
+			return epI < epJ
+		}
+		return simplified[i] < simplified[j]
+	})
+
 	return simplified
 }
 
@@ -663,9 +832,20 @@ func (m Model) updateTVFileCursor() Model {
 	if m.tvFileSearch == "" {
 		return m
 	}
-	searchStr := fmt.Sprintf("Episode %s:", m.tvFileSearch)
+	searchNum, err := strconv.Atoi(m.tvFileSearch)
+	if err == nil {
+		for i, f := range m.tvFiles {
+			if extractEpisodeNum(f) == searchNum {
+				m.cursor = i
+				return m
+			}
+		}
+	}
+	searchPadded := fmt.Sprintf("Ep %02d", searchNum)
+	searchPlain := fmt.Sprintf("Ep %s", m.tvFileSearch)
 	for i, f := range m.tvFiles {
-		if strings.Contains(f, searchStr) {
+		lower := strings.ToLower(f)
+		if strings.Contains(lower, strings.ToLower(searchPadded)) || strings.Contains(lower, strings.ToLower(searchPlain)) {
 			m.cursor = i
 			return m
 		}
@@ -707,4 +887,27 @@ func (m Model) updateDBMatchCursor() Model {
 		m.cursor = target
 	}
 	return m
+}
+
+func startAutoInstallCmd(progressChan chan string) tea.Cmd {
+	return func() tea.Msg {
+		err := sysutil.AutoInstallDependencies(func(status string) {
+			select {
+			case progressChan <- status:
+			default:
+			}
+		})
+		close(progressChan)
+		return InstallFinishedMsg{Err: err}
+	}
+}
+
+func waitForInstallProgress(sub <-chan string) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-sub
+		if !ok {
+			return nil
+		}
+		return InstallProgressMsg{Step: msg}
+	}
 }

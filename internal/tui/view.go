@@ -303,6 +303,163 @@ func PreRenderCache(img image.Image, widths []int) map[int]map[bool]string {
 	return cache
 }
 
+func renderSystemHealthCheck(m Model) string {
+	width := m.terminalWidth
+	if width == 0 {
+		width = 80
+	}
+	termHeight := m.terminalHeight
+	if termHeight == 0 {
+		termHeight = 24
+	}
+
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99"))
+	okBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render("[✓ INSTALLED]")
+	runningBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render("[✓ RUNNING  ]")
+	builtinBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true).Render("[✓ BUILT-IN ]")
+	missingBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("[✗ NOT FOUND]")
+	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	subStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	actionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Bold(true)
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true)
+
+	// Status rows
+	var mpvRow string
+	if m.health.HasMPV {
+		mpvRow = fmt.Sprintf("  %s  MPV Video Player", okBadge)
+	} else {
+		mpvRow = fmt.Sprintf("  %s  MPV Video Player\n      %s", missingBadge, warnStyle.Render("↳ Video player missing (playback window cannot open)"))
+	}
+
+	var prowlarrRow string
+	if m.health.HasProwlarr {
+		prowlarrRow = fmt.Sprintf("  %s  Prowlarr Torrent Indexer (%s)", runningBadge, m.health.ProwlarrURL)
+	} else {
+		prowlarrRow = fmt.Sprintf("  %s  Prowlarr Torrent Indexer\n      %s", missingBadge, warnStyle.Render("↳ Western Media is a NO GO (Movies & TV shows disabled)"))
+	}
+
+	var browserRow string
+	if m.health.HasBrowser {
+		browserRow = fmt.Sprintf("  %s  Browser Engine (Rod / Edge / Chrome for K-Drama)", okBadge)
+	} else {
+		browserRow = fmt.Sprintf("  %s  Browser Engine (Edge / Chrome)\n      %s", missingBadge, warnStyle.Render("↳ K-Drama disabled (Anime only)"))
+	}
+
+	animeRow := fmt.Sprintf("  %s  Pure Go Anime Scraper (AniList / Kitsu / Anikoto)", builtinBadge)
+
+	// Summary box
+	var summaryText string
+	if m.health.AllReady() {
+		summaryText = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render("  ✓ All components installed! Full access to Movies, TV Shows, Anime & K-Drama.")
+	} else {
+		var limitations []string
+		if !m.health.HasProwlarr {
+			limitations = append(limitations, "• Western Media is a NO GO (Prowlarr missing)")
+		}
+		if !m.health.HasBrowser {
+			limitations = append(limitations, "• K-Drama disabled (Anime only)")
+		}
+		if !m.health.HasMPV {
+			limitations = append(limitations, "• Video playback disabled (MPV missing)")
+		}
+		summaryText = warnStyle.Render("  Current Limitations:\n  " + strings.Join(limitations, "\n  "))
+	}
+
+	// Action 2 text
+	var opt2Text string
+	if m.health.AllReady() {
+		opt2Text = "Continue to Goovie (Full Access)"
+	} else if m.health.HasBrowser {
+		opt2Text = "Continue to Goovie (Watch Anime + K-Drama)"
+	} else {
+		opt2Text = "Continue to Goovie (Watch Anime Only)"
+	}
+
+	actions := fmt.Sprintf(
+		"  %s %s\n  %s %s\n  %s %s",
+		keyStyle.Render("[ 1 ]"), actionStyle.Render("Auto-install everything (MPV + Prowlarr + Top Indexers)"),
+		keyStyle.Render("[ 2 ]"), subStyle.Render(opt2Text),
+		keyStyle.Render("[ q ]"), dimStyle.Render("Quit"),
+	)
+
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		titleStyle.Render("  ═══════════════════ GOOVIE SYSTEM SETUP & HEALTH ═══════════════════"),
+		"",
+		mpvRow,
+		"",
+		prowlarrRow,
+		"",
+		browserRow,
+		"",
+		animeRow,
+		"",
+		"  ─────────────────────────────────────────────────────────────────────",
+		summaryText,
+		"  ─────────────────────────────────────────────────────────────────────",
+		"",
+		actions,
+		"",
+	)
+
+	return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, content)
+}
+
+func renderInstallingDependencies(m Model) string {
+	width := m.terminalWidth
+	if width == 0 {
+		width = 80
+	}
+	termHeight := m.terminalHeight
+	if termHeight == 0 {
+		termHeight = 24
+	}
+
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99"))
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true)
+
+	if !m.installComplete {
+		spinnerView := m.loadingSpinner.View()
+		progressText := lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Bold(true).Render(m.installProgress)
+		hintText := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("Please wait while dependencies are downloaded and configured...")
+
+		content := lipgloss.JoinVertical(lipgloss.Center,
+			titleStyle.Render("═══════════════════ 1-CLICK AUTO-INSTALLER ═══════════════════"),
+			"\n",
+			lipgloss.JoinHorizontal(lipgloss.Center, spinnerView, " ", progressText),
+			"\n",
+			hintText,
+		)
+		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, content)
+	}
+
+	if m.installErr != nil {
+		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+		content := lipgloss.JoinVertical(lipgloss.Center,
+			titleStyle.Render("═══════════════════ 1-CLICK AUTO-INSTALLER ═══════════════════"),
+			"\n",
+			errStyle.Render(fmt.Sprintf("⚠️ Auto-installation finished with an issue: %v", m.installErr)),
+			"\n",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("Some dependencies may need to be installed manually, or try again:"),
+			"\n",
+			fmt.Sprintf("%s Retry Auto-Install  •  %s Continue to Goovie", keyStyle.Render("[ 1 ]"), keyStyle.Render("[ 2 / Enter ]")),
+		)
+		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, content)
+	}
+
+	successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	content := lipgloss.JoinVertical(lipgloss.Center,
+		titleStyle.Render("═══════════════════ 1-CLICK AUTO-INSTALLER ═══════════════════"),
+		"\n",
+		successStyle.Render("✓ All dependencies installed, configured, and ready!"),
+		"\n",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("MPV player is ready, and Prowlarr has been pre-configured with top indexers."),
+		"\n",
+		fmt.Sprintf("Press %s to launch Goovie", keyStyle.Render("[ 2 / Enter ]")),
+	)
+	return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, content)
+}
+
 func (m Model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("\n  ❌ Error: %v\n\n  Press [Esc] to exit.", m.err)
@@ -313,6 +470,12 @@ func (m Model) View() string {
 	}
 
 	switch m.state {
+	case StateSystemHealthCheck:
+		return renderSystemHealthCheck(m)
+
+	case StateInstallingDependencies:
+		return renderInstallingDependencies(m)
+
 	case StateCheckingAPIKey:
 		width := m.terminalWidth
 		if width == 0 {
@@ -358,6 +521,7 @@ func (m Model) View() string {
 		
 		subtitleStyle := lipgloss.NewStyle().Align(lipgloss.Center)
 		enterInst := subtitleStyle.Render("[ ENTER ] to continue")
+		setupInst := subtitleStyle.Render("[ S ] Setup & System Health")
 		backInst := subtitleStyle.Render("[ BACKSPACE ] to go back")
 		escInst := subtitleStyle.Render("[ ESC ] to exit")
 		
@@ -365,6 +529,8 @@ func (m Model) View() string {
 			m.cachedFrontTitle,
 			"\n\n",
 			enterInst,
+			"\n",
+			setupInst,
 			"\n",
 			backInst,
 			"\n",
@@ -412,10 +578,15 @@ func (m Model) View() string {
 			cardsBlock = lipgloss.JoinHorizontal(lipgloss.Top, movieCard, spacingPad, tvCard, spacingPad, animeCard)
 		}
 
+		footerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Align(lipgloss.Center)
+		footer := footerStyle.Render("[← / →] Select • [Enter] Choose • [s] Setup / Health • [q] Quit")
+
 		finalUI := lipgloss.JoinVertical(lipgloss.Center,
 			m.cachedTitle,
 			"\n\n",
 			cardsBlock,
+			"\n\n",
+			footer,
 		)
 
 		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, finalUI)
@@ -809,6 +980,9 @@ func (m Model) View() string {
 				year = year[:4]
 			}
 			items = append(items, [2]string{show.Name, year})
+		}
+		if len(items) == 0 {
+			return "\n  ❌ No database matches found. Press [Esc] to quit."
 		}
 		return renderDatabaseMatchCamera("SELECT DATABASE MATCH", items, m.cursor, m.dbMatchSearch)
 	case StateTVSeasonSelect:
