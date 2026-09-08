@@ -167,13 +167,18 @@ func StartProwlarr() error {
 	return fmt.Errorf("timed out waiting for Prowlarr to initialize")
 }
 
-// ConfigureTopIndexers adds recommended public indexers (1337x, YTS, EZTV, TorrentGalaxy) via Prowlarr REST API
+// ConfigureTopIndexers adds recommended public indexers via Prowlarr REST API
 func ConfigureTopIndexers(apiKey string) error {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second}
+	indexerEndpoint := "http://localhost:9696/api/v1/indexer"
 
 	// 1. Get existing indexers to avoid duplicates
-	existingURL := fmt.Sprintf("http://localhost:9696/api/v1/indexer?apikey=%s", apiKey)
-	resp, err := client.Get(existingURL)
+	req, err := http.NewRequest("GET", indexerEndpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Api-Key", apiKey)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -186,23 +191,40 @@ func ConfigureTopIndexers(apiKey string) error {
 		if name, ok := idx["name"].(string); ok {
 			existingNames[strings.ToLower(name)] = true
 		}
+		if def, ok := idx["definitionName"].(string); ok {
+			existingNames[strings.ToLower(def)] = true
+		}
 	}
 
-	// 2. Fetch available indexer schemas
-	schemaURL := fmt.Sprintf("http://localhost:9696/api/v1/indexer/schema?apikey=%s", apiKey)
-	sResp, err := client.Get(schemaURL)
-	if err != nil {
-		return err
-	}
-	defer sResp.Body.Close()
-
+	// 2. Fetch available indexer schemas, retrying if Prowlarr is still loading them on startup
+	schemaURL := "http://localhost:9696/api/v1/indexer/schema"
 	var schemas []map[string]interface{}
-	if err := json.NewDecoder(sResp.Body).Decode(&schemas); err != nil {
-		return err
+	for attempt := 0; attempt < 15; attempt++ {
+		sReq, err := http.NewRequest("GET", schemaURL, nil)
+		if err == nil {
+			sReq.Header.Set("X-Api-Key", apiKey)
+			sResp, err := client.Do(sReq)
+			if err == nil {
+				if sResp.StatusCode == http.StatusOK {
+					_ = json.NewDecoder(sResp.Body).Decode(&schemas)
+					sResp.Body.Close()
+					if len(schemas) > 0 {
+						break
+					}
+				} else {
+					sResp.Body.Close()
+				}
+			}
+		}
+		time.Sleep(1 * time.Second)
 	}
 
-	// Target top public indexers
-	targets := []string{"1337x", "yts", "eztv", "torrentgalaxy", "limetorrents"}
+	if len(schemas) == 0 {
+		return fmt.Errorf("no indexer schemas available from Prowlarr")
+	}
+
+	// Target top public indexers (Movies, TV, Anime)
+	targets := []string{"yts", "thepiratebay", "limetorrents", "eztv", "torrentgalaxy", "1337x", "kickasstorrents", "nyaasi"}
 
 	for _, target := range targets {
 		if existingNames[target] {
@@ -214,20 +236,52 @@ func ConfigureTopIndexers(apiKey string) error {
 			name, _ := schema["name"].(string)
 
 			if strings.EqualFold(defName, target) || strings.EqualFold(name, target) {
-				// Clone and enable
+				// Must set AppProfileId=1 (default profile) and remove any null/0 id
+				schema["appProfileId"] = 1
 				schema["enable"] = true
+				delete(schema, "id")
+
 				bodyBytes, err := json.Marshal(schema)
 				if err != nil {
 					continue
 				}
 
-				addReq, err := http.NewRequest("POST", existingURL, bytes.NewBuffer(bodyBytes))
+				// Attempt 1: Add with enable=true
+				addReq, err := http.NewRequest("POST", indexerEndpoint, bytes.NewBuffer(bodyBytes))
+				if err != nil {
+					continue
+				}
+				addReq.Header.Set("Content-Type", "application/json")
+				addReq.Header.Set("X-Api-Key", apiKey)
+
+				addResp, err := client.Do(addReq)
 				if err == nil {
-					addReq.Header.Set("Content-Type", "application/json")
-					addReq.Header.Set("X-Api-Key", apiKey)
-					addResp, err := client.Do(addReq)
-					if err == nil {
-						addResp.Body.Close()
+					defer addResp.Body.Close()
+					if addResp.StatusCode == http.StatusOK || addResp.StatusCode == http.StatusCreated {
+						existingNames[target] = true
+						break
+					}
+				}
+
+				// Attempt 2: If live connection test failed (e.g. Cloudflare / ISP block),
+				// add with enable=false so it is successfully saved and listed in Prowlarr library
+				schema["enable"] = false
+				fbBytes, err := json.Marshal(schema)
+				if err != nil {
+					continue
+				}
+
+				fbReq, err := http.NewRequest("POST", indexerEndpoint, bytes.NewBuffer(fbBytes))
+				if err != nil {
+					continue
+				}
+				fbReq.Header.Set("Content-Type", "application/json")
+				fbReq.Header.Set("X-Api-Key", apiKey)
+
+				fbResp, err := client.Do(fbReq)
+				if err == nil {
+					defer fbResp.Body.Close()
+					if fbResp.StatusCode == http.StatusOK || fbResp.StatusCode == http.StatusCreated {
 						existingNames[target] = true
 					}
 				}
@@ -287,16 +341,22 @@ func AutoInstallDependencies(onProgress func(step string)) error {
 		return fmt.Errorf("failed to start Prowlarr: %w", err)
 	}
 
+	// Give Prowlarr a few seconds to load database and schema definitions
+	time.Sleep(3 * time.Second)
+
 	// Re-check detected API key if needed
-	if apiKey == "" {
-		_ = config.AutoDetectAPIKey()
+	_ = config.AutoDetectAPIKey()
+	if config.ProwlarrAPIKey != "" {
 		apiKey = config.ProwlarrAPIKey
 	}
 
 	// 5. Configure top indexers via API
 	if apiKey != "" {
-		onProgress("Configuring top indexers (1337x, YTS, EZTV, TorrentGalaxy)...")
-		_ = ConfigureTopIndexers(apiKey)
+		onProgress("Configuring top indexers (YTS, The Pirate Bay, LimeTorrents, EZTV, 1337x)...")
+		if err := ConfigureTopIndexers(apiKey); err != nil {
+			time.Sleep(2 * time.Second)
+			_ = ConfigureTopIndexers(apiKey)
+		}
 		config.ProwlarrAPIKey = apiKey
 		_ = config.SaveConfig(apiKey)
 	}
