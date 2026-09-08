@@ -193,22 +193,6 @@ func TestResolveProxyLink_InfoHashPreferredOverMagnetUri(t *testing.T) {
 	}
 }
 
-// --- writeDebugLog ---
-
-func TestWriteDebugLog(t *testing.T) {
-	os.Remove("torrent_debug.txt")
-	writeDebugLog("test log entry\n")
-
-	data, err := os.ReadFile("torrent_debug.txt")
-	if err != nil {
-		t.Fatalf("failed to read debug log: %v", err)
-	}
-	if string(data) != "test log entry\n" {
-		t.Errorf("expected 'test log entry\\n', got %q", string(data))
-	}
-	os.Remove("torrent_debug.txt")
-}
-
 // --- downloadTorrentFile ---
 
 func TestDownloadTorrentFile_Success(t *testing.T) {
@@ -254,3 +238,147 @@ func TestSearchSingleIndexer_QualityFilter(t *testing.T) {
 		t.Errorf("MinimumSeeders should be positive, got %d", config.MinimumSeeders)
 	}
 }
+
+// --- TV and Retry Fetch Tests ---
+
+func TestFetchWithRetry_Success(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") != config.UserAgent {
+			t.Errorf("expected User-Agent %q, got %q", config.UserAgent, r.Header.Get("User-Agent"))
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer ts.Close()
+
+	resp, err := fetchWithRetry(ts.URL)
+	if err != nil {
+		t.Fatalf("fetchWithRetry failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestFetchWithRetry_RetryThenSuccess(t *testing.T) {
+	attempts := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"recovered"}`))
+	}))
+	defer ts.Close()
+
+	resp, err := fetchWithRetry(ts.URL)
+	if err != nil {
+		t.Fatalf("fetchWithRetry expected success on retry, got err: %v", err)
+	}
+	defer resp.Body.Close()
+	if attempts != 2 {
+		t.Errorf("expected 2 attempts, got %d", attempts)
+	}
+}
+
+func TestFetchWithRetry_AllFail(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	_, err := fetchWithRetry(ts.URL)
+	if err == nil {
+		t.Error("expected error when server always fails")
+	}
+}
+
+func TestFetchTVSeasons_Fallback(t *testing.T) {
+	cmd := FetchTVSeasons(-1)
+	msg := cmd()
+	seasons, ok := msg.(TvSeasonsMsg)
+	if !ok {
+		t.Fatalf("expected TvSeasonsMsg, got %T", msg)
+	}
+	if len(seasons) == 0 {
+		t.Error("expected fallback default seasons, got empty")
+	}
+	if seasons[0].Number != 1 {
+		t.Errorf("expected first season number 1, got %d", seasons[0].Number)
+	}
+}
+
+func TestFetchTVEpisodes_GracefulDegrade(t *testing.T) {
+	cmd := FetchTVEpisodes(-1)
+	msg := cmd()
+	episodes, ok := msg.(TvEpisodesMsg)
+	if !ok {
+		t.Fatalf("expected TvEpisodesMsg, got %T", msg)
+	}
+	if episodes != nil {
+		t.Errorf("expected nil episodes for invalid ID, got %+v", episodes)
+	}
+}
+
+func TestIsJunkOrNonVideo(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantJunk bool
+	}{
+		{"Friends S04E01.mkv", false},
+		{"Friends S04E01.mp4", false},
+		{"Friends S04E01.avi", false},
+		{"Ninite K-Lite Codec Pack Unattended Silent Installer and Updater.exe", true},
+		{"Ninite K-Lite Codec Pack.bat", true},
+		{"codec_installer.msi", true},
+		{"sample.mkv", true},
+		{"Friends S04E01.sample.mkv", true},
+		{"trailer.mp4", true},
+		{"readme.txt", true},
+		{"info.nfo", true},
+		{"poster.jpg", true},
+		{"subs.srt", true},
+	}
+
+	for _, tt := range tests {
+		got := IsJunkOrNonVideo(tt.input)
+		if got != tt.wantJunk {
+			t.Errorf("IsJunkOrNonVideo(%q) = %v, want %v", tt.input, got, tt.wantJunk)
+		}
+	}
+}
+
+func TestMatchesQuality(t *testing.T) {
+	tests := []struct {
+		title   string
+		quality string
+		want    bool
+	}{
+		{"Friends S04 (1080p BluRay x265 Joy)", "1080p", true},
+		{"Friends S04 (720p BluRay x265)", "1080p", false},
+		{"Friends S04 (720p BluRay x265)", "720p", true},
+		{"Dune 2024 2160p UHD HDR", "4K", true},
+		{"Dune 2024 4K UHD", "4K", true},
+		{"Dune 2024 1080p", "4K", false},
+		{"Any Movie Title 1080p", "All", true},
+		{"Any Movie Title 720p", "", true},
+	}
+
+	for _, tt := range tests {
+		got := MatchesQuality(tt.title, tt.quality)
+		if got != tt.want {
+			t.Errorf("MatchesQuality(%q, %q) = %v, want %v", tt.title, tt.quality, got, tt.want)
+		}
+	}
+}
+
+func TestFetchAnime_ReturnsCmd(t *testing.T) {
+	cmd := FetchAnime("Naruto", "All")
+	if cmd == nil {
+		t.Fatal("FetchAnime should return a non-nil tea.Cmd")
+	}
+}
+

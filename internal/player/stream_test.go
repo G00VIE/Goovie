@@ -304,6 +304,133 @@ func TestVibeProxy_ServeMaster_ValidM3U8(t *testing.T) {
 	}
 }
 
+func TestVibeProxy_ServeMaster_SubdirectoryVariants(t *testing.T) {
+	var requestedPaths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPaths = append(requestedPaths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		if r.URL.Path == "/master.m3u8" {
+			io.WriteString(w, "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000\n720p/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=500000\n360p/index.m3u8")
+		} else if r.URL.Path == "/720p/index.m3u8" {
+			io.WriteString(w, "#EXTM3U\n#EXTINF:10,\n0001.ts")
+		} else {
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	proxy := &VibeProxy{
+		BaseURL:  "http://127.0.0.1:12345",
+		Sessions: make(map[string]*VibeSession),
+	}
+	registeredURL := proxy.Register(ts.URL+"/master.m3u8", ts.URL)
+	trimmed := strings.TrimPrefix(registeredURL, proxy.BaseURL+"/stream/")
+	sessionID := strings.TrimSuffix(trimmed, "/master.m3u8")
+
+	// 1. Fetch master playlist
+	req := httptest.NewRequest("GET", "/stream/"+sessionID+"/master.m3u8", nil)
+	w := httptest.NewRecorder()
+	proxy.handle(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 on master, got %d", w.Code)
+	}
+
+	masterBody := w.Body.String()
+	if !strings.Contains(masterBody, "/stream/"+sessionID+"/v0.m3u8") {
+		t.Errorf("master playlist should contain v0.m3u8, got: %s", masterBody)
+	}
+
+	// 2. Fetch v0 variant playlist (which corresponds to 720p/index.m3u8)
+	reqVar := httptest.NewRequest("GET", "/stream/"+sessionID+"/v0.m3u8", nil)
+	wVar := httptest.NewRecorder()
+	proxy.handle(wVar, reqVar)
+
+	if wVar.Code != http.StatusOK {
+		t.Fatalf("expected 200 on variant v0, got %d (body: %s)", wVar.Code, wVar.Body.String())
+	}
+	varBody := wVar.Body.String()
+	if !strings.Contains(varBody, "/stream/"+sessionID+"/v0/seg/0") {
+		t.Errorf("variant body should contain rewritten segment, got: %s", varBody)
+	}
+
+	// Check that remote server received /720p/index.m3u8 and NOT /index.m3u8
+	found720p := false
+	for _, p := range requestedPaths {
+		if p == "/720p/index.m3u8" {
+			found720p = true
+		}
+	}
+	if !found720p {
+		t.Errorf("remote server should have received /720p/index.m3u8, got paths: %v", requestedPaths)
+	}
+}
+
+func TestVibeProxy_ServeKey(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/enc.key" {
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Write([]byte("16_BYTE_AES_KEY!"))
+		} else {
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	proxy := &VibeProxy{
+		BaseURL:  "http://127.0.0.1:12345",
+		Sessions: make(map[string]*VibeSession),
+	}
+	session := &VibeSession{
+		MasterURL: ts.URL + "/master.m3u8",
+		Referer:   ts.URL,
+		Variants:  make(map[string][]VibeSegment),
+		Keys: map[string]string{
+			"v0-k0": ts.URL + "/enc.key",
+		},
+	}
+	proxy.Sessions["test"] = session
+
+	req := httptest.NewRequest("GET", "/stream/test/v0/key/0", nil)
+	w := httptest.NewRecorder()
+	proxy.handle(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for key request, got %d", w.Code)
+	}
+	if w.Body.String() != "16_BYTE_AES_KEY!" {
+		t.Errorf("expected '16_BYTE_AES_KEY!', got: %q", w.Body.String())
+	}
+}
+
+func TestVibeProxy_ServeMediaPlaylistDirectly(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		io.WriteString(w, "#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:10,\nseg0.ts\n#EXTINF:10,\nseg1.ts")
+	}))
+	defer ts.Close()
+
+	proxy := &VibeProxy{
+		BaseURL:  "http://127.0.0.1:12345",
+		Sessions: make(map[string]*VibeSession),
+	}
+	registeredURL := proxy.Register(ts.URL+"/stream.m3u8", ts.URL)
+	trimmed := strings.TrimPrefix(registeredURL, proxy.BaseURL+"/stream/")
+	sessionID := strings.TrimSuffix(trimmed, "/master.m3u8")
+
+	req := httptest.NewRequest("GET", "/stream/"+sessionID+"/master.m3u8", nil)
+	w := httptest.NewRecorder()
+	proxy.handle(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for media playlist master, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "/stream/"+sessionID+"/main/seg/0") {
+		t.Errorf("direct media playlist should have segments rewritten to main/seg/0, got: %s", body)
+	}
+}
+
 func TestVibeProxy_ServeSegment_InvalidIndex(t *testing.T) {
 	proxy := &VibeProxy{
 		BaseURL:  "http://127.0.0.1:12345",
@@ -527,5 +654,16 @@ func TestStrconvItoa(t *testing.T) {
 	result := strconv.Itoa(42)
 	if result != "42" {
 		t.Errorf("strconv.Itoa(42) = %q, want '42'", result)
+	}
+}
+
+func TestCloseProxy(t *testing.T) {
+	InitProxy()
+	if GlobalProxy == nil || GlobalProxy.server == nil {
+		t.Fatal("GlobalProxy or server should be initialized")
+	}
+	CloseProxy()
+	if GlobalProxy.server != nil || GlobalProxy.listener != nil {
+		t.Error("GlobalProxy server and listener should be nil after CloseProxy")
 	}
 }
