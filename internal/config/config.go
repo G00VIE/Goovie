@@ -9,11 +9,12 @@ import (
 )
 
 var (
-	ProwlarrAPIKey = ""
-	ProwlarrURL    = "http://localhost:9696"
-	MinimumSeeders = 5
-	AnikotoBaseURL = "https://anikototv.to"
-	UserAgent      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	ProwlarrAPIKey  = ""
+	ProwlarrURL     = "http://localhost:9696"
+	FlareSolverrURL = "http://localhost:8191"
+	MinimumSeeders  = 5
+	AnikotoBaseURL  = "https://anikototv.to"
+	UserAgent       = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 	DefaultTrackers = []string{
 		"udp://tracker.opentrackr.org:1337/announce",
@@ -26,7 +27,10 @@ var (
 )
 
 type AppConfig struct {
-	ProwlarrAPIKey string `json:"prowlarrApiKey"`
+	ProwlarrAPIKey  string `json:"prowlarrApiKey"`
+	ProwlarrURL     string `json:"prowlarrUrl,omitempty"`
+	FlareSolverrURL string `json:"flaresolverrUrl,omitempty"`
+	MinimumSeeders  int    `json:"minimumSeeders,omitempty"`
 }
 
 type prowlarrXMLConfig struct {
@@ -34,26 +38,63 @@ type prowlarrXMLConfig struct {
 	ApiKey  string   `xml:"ApiKey"`
 }
 
-func getGoovieConfigPath() string {
+// GoovieDir returns the per-user data directory used by goovie.
+func GoovieDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "goovie_config.json" // fallback to current dir
+		return "goovie_data"
 	}
-	dir := filepath.Join(home, ".goovie")
+	return filepath.Join(home, ".goovie")
+}
+
+func AppConfigPath() string {
+	dir := GoovieDir()
 	_ = os.MkdirAll(dir, 0755)
 	return filepath.Join(dir, "config.json")
 }
 
+func getGoovieConfigPath() string {
+	return AppConfigPath()
+}
+
+// ReadConfig loads the raw persisted config without touching globals.
+func ReadConfig() (AppConfig, error) {
+	var cfg AppConfig
+	data, err := os.ReadFile(AppConfigPath())
+	if err != nil {
+		return cfg, err
+	}
+	err = json.Unmarshal(data, &cfg)
+	return cfg, err
+}
+
+// WriteConfig saves the full AppConfig formatted with indentation.
+func WriteConfig(cfg AppConfig) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(AppConfigPath(), data, 0644)
+}
+
+func applyConfigToGlobals(cfg AppConfig) {
+	if cfg.ProwlarrURL != "" {
+		ProwlarrURL = cfg.ProwlarrURL
+	}
+	if cfg.FlareSolverrURL != "" {
+		FlareSolverrURL = cfg.FlareSolverrURL
+	}
+	if cfg.MinimumSeeders > 0 {
+		MinimumSeeders = cfg.MinimumSeeders
+	}
+}
+
 func LoadConfig() bool {
-	path := getGoovieConfigPath()
-	data, err := os.ReadFile(path)
+	cfg, err := ReadConfig()
 	if err != nil {
 		return false
 	}
-	var cfg AppConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
+	applyConfigToGlobals(cfg)
 	if cfg.ProwlarrAPIKey != "" {
 		ProwlarrAPIKey = cfg.ProwlarrAPIKey
 		return true
@@ -61,15 +102,26 @@ func LoadConfig() bool {
 	return false
 }
 
+// SaveConfig persists a Prowlarr API key while preserving all other configuration fields.
 func SaveConfig(key string) error {
-	ProwlarrAPIKey = key
-	path := getGoovieConfigPath()
-	cfg := AppConfig{ProwlarrAPIKey: key}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	cfg, err := ReadConfig()
 	if err != nil {
-		return err
+		cfg = AppConfig{}
 	}
-	return os.WriteFile(path, data, 0644)
+	cfg.ProwlarrAPIKey = key
+	ProwlarrAPIKey = key
+	return WriteConfig(cfg)
+}
+
+// SaveFlareSolverrURL updates and persists the FlareSolverr URL.
+func SaveFlareSolverrURL(u string) error {
+	cfg, err := ReadConfig()
+	if err != nil {
+		cfg = AppConfig{}
+	}
+	cfg.FlareSolverrURL = u
+	FlareSolverrURL = u
+	return WriteConfig(cfg)
 }
 
 func AutoDetectAPIKey() bool {

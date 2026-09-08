@@ -26,6 +26,7 @@ func main() {
 	defer func() {
 		bittorrent.CloseGlobalEngine()
 		player.CloseProxy()
+		sysutil.StopFlareSolverr()
 		sysutil.PurgeAllTempData()
 	}()
 
@@ -35,6 +36,7 @@ func main() {
 		<-sigChan
 		bittorrent.CloseGlobalEngine()
 		player.CloseProxy()
+		sysutil.StopFlareSolverr()
 		sysutil.PurgeAllTempData()
 		os.Exit(0)
 	}()
@@ -57,7 +59,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Warning: failed to load itadori.png: %v\n", errA)
 	}
 
-	commonWidths := []int{30, 40, 50, 60}
+	commonWidths := []int{18, 22, 26, 30, 40, 50, 60}
 
 	var cachedTitleLines []string
 	if fANSI, errANSI := assets.EmbeddedFiles.Open("font/ANSI Compact.flf"); errANSI == nil {

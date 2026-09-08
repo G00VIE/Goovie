@@ -314,3 +314,81 @@ func TestDefaultTrackers_UdpScheme(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteReadConfig_RoundTrip(t *testing.T) {
+	want := AppConfig{
+		ProwlarrAPIKey:  "my-secret-key",
+		ProwlarrURL:     "http://custom-prowlarr:9696",
+		FlareSolverrURL: "http://custom-flaresolverr:8191",
+		MinimumSeeders:  10,
+	}
+
+	if err := WriteConfig(want); err != nil {
+		t.Fatalf("WriteConfig failed: %v", err)
+	}
+
+	got, err := ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig failed: %v", err)
+	}
+
+	if got != want {
+		t.Errorf("round trip mismatch: got %+v, want %+v", got, want)
+	}
+
+	_ = os.Remove(AppConfigPath())
+}
+
+func TestSaveConfig_PreservesExistingFields(t *testing.T) {
+	initial := AppConfig{
+		ProwlarrURL:     "http://remote-prowlarr:9696",
+		FlareSolverrURL: "http://remote-flaresolverr:8191",
+		MinimumSeeders:  8,
+	}
+
+	if err := WriteConfig(initial); err != nil {
+		t.Fatalf("WriteConfig failed: %v", err)
+	}
+
+	if err := SaveConfig("new-api-key"); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	cfg, err := ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig failed: %v", err)
+	}
+
+	if cfg.ProwlarrAPIKey != "new-api-key" {
+		t.Errorf("expected api key 'new-api-key', got %q", cfg.ProwlarrAPIKey)
+	}
+	if cfg.ProwlarrURL != initial.ProwlarrURL {
+		t.Errorf("ProwlarrURL was lost: got %q, want %q", cfg.ProwlarrURL, initial.ProwlarrURL)
+	}
+	if cfg.FlareSolverrURL != initial.FlareSolverrURL {
+		t.Errorf("FlareSolverrURL was lost: got %q, want %q", cfg.FlareSolverrURL, initial.FlareSolverrURL)
+	}
+	if cfg.MinimumSeeders != initial.MinimumSeeders {
+		t.Errorf("MinimumSeeders was lost: got %d, want %d", cfg.MinimumSeeders, initial.MinimumSeeders)
+	}
+
+	_ = os.Remove(AppConfigPath())
+}
+
+func TestSaveFlareSolverrURL(t *testing.T) {
+	if err := SaveFlareSolverrURL("http://127.0.0.1:8191"); err != nil {
+		t.Fatalf("SaveFlareSolverrURL failed: %v", err)
+	}
+	if FlareSolverrURL != "http://127.0.0.1:8191" {
+		t.Errorf("global FlareSolverrURL not updated: %q", FlareSolverrURL)
+	}
+	cfg, err := ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig failed: %v", err)
+	}
+	if cfg.FlareSolverrURL != "http://127.0.0.1:8191" {
+		t.Errorf("persisted FlareSolverrURL mismatch: %q", cfg.FlareSolverrURL)
+	}
+	_ = os.Remove(AppConfigPath())
+}
+

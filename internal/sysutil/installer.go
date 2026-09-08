@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"bubble-stream/internal/config"
+	"github.com/go-rod/rod/lib/launcher"
 )
 
 // FindProwlarrExecutable checks common installation paths on Windows, macOS, and Linux
@@ -167,10 +168,29 @@ func StartProwlarr() error {
 	return fmt.Errorf("timed out waiting for Prowlarr to initialize")
 }
 
-// ConfigureTopIndexers adds recommended public indexers via Prowlarr REST API
+// ConfigureTopIndexers adds recommended public indexers (YTS, The Pirate Bay, LimeTorrents, EZTV, TorrentGalaxy) via Prowlarr REST API,
+// routing Cloudflare-protected indexers through FlareSolverr if it is running.
 func ConfigureTopIndexers(apiKey string) error {
 	client := &http.Client{Timeout: 15 * time.Second}
-	indexerEndpoint := "http://localhost:9696/api/v1/indexer"
+
+	prowlarrURL := config.ProwlarrURL
+	if prowlarrURL == "" {
+		prowlarrURL = "http://localhost:9696"
+	}
+	flareURL := config.FlareSolverrURL
+	if flareURL == "" {
+		flareURL = "http://localhost:8191"
+	}
+
+	indexerEndpoint := fmt.Sprintf("%s/api/v1/indexer", prowlarrURL)
+
+	// 0. If FlareSolverr is running, ensure tag and indexerproxy are registered in Prowlarr
+	proxyTagID := 0
+	if IsFlareSolverrRunning() {
+		if id, err := EnsureFlareSolverrInProwlarr(prowlarrURL, apiKey, flareURL); err == nil {
+			proxyTagID = id
+		}
+	}
 
 	// 1. Get existing indexers to avoid duplicates
 	req, err := http.NewRequest("GET", indexerEndpoint, nil)
@@ -197,7 +217,7 @@ func ConfigureTopIndexers(apiKey string) error {
 	}
 
 	// 2. Fetch available indexer schemas, retrying if Prowlarr is still loading them on startup
-	schemaURL := "http://localhost:9696/api/v1/indexer/schema"
+	schemaURL := fmt.Sprintf("%s/api/v1/indexer/schema", prowlarrURL)
 	var schemas []map[string]interface{}
 	for attempt := 0; attempt < 15; attempt++ {
 		sReq, err := http.NewRequest("GET", schemaURL, nil)
@@ -223,11 +243,20 @@ func ConfigureTopIndexers(apiKey string) error {
 		return fmt.Errorf("no indexer schemas available from Prowlarr")
 	}
 
-	// Target top public indexers (Movies & TV)
-	targets := []string{"yts", "thepiratebay", "limetorrents", "eztv", "torrentgalaxy"}
+	// Target top public indexers: Cloudflare-protected ones route through FlareSolverr
+	targets := []struct {
+		name      string
+		needProxy bool
+	}{
+		{name: "yts", needProxy: false},
+		{name: "thepiratebay", needProxy: false},
+		{name: "limetorrents", needProxy: true},
+		{name: "eztv", needProxy: true},
+		{name: "torrentgalaxy", needProxy: false},
+	}
 
 	for _, target := range targets {
-		if existingNames[target] {
+		if existingNames[target.name] {
 			continue
 		}
 
@@ -235,11 +264,15 @@ func ConfigureTopIndexers(apiKey string) error {
 			defName, _ := schema["definitionName"].(string)
 			name, _ := schema["name"].(string)
 
-			if strings.EqualFold(defName, target) || strings.EqualFold(name, target) {
+			if strings.EqualFold(defName, target.name) || strings.EqualFold(name, target.name) {
 				// Must set AppProfileId=1 (default profile) and remove any null/0 id
 				schema["appProfileId"] = 1
 				schema["enable"] = true
 				delete(schema, "id")
+
+				if target.needProxy && proxyTagID > 0 {
+					schema["tags"] = []int{proxyTagID}
+				}
 
 				bodyBytes, err := json.Marshal(schema)
 				if err != nil {
@@ -258,7 +291,7 @@ func ConfigureTopIndexers(apiKey string) error {
 				if err == nil {
 					defer addResp.Body.Close()
 					if addResp.StatusCode == http.StatusOK || addResp.StatusCode == http.StatusCreated {
-						existingNames[target] = true
+						existingNames[target.name] = true
 						break
 					}
 				}
@@ -282,7 +315,7 @@ func ConfigureTopIndexers(apiKey string) error {
 				if err == nil {
 					defer fbResp.Body.Close()
 					if fbResp.StatusCode == http.StatusOK || fbResp.StatusCode == http.StatusCreated {
-						existingNames[target] = true
+						existingNames[target.name] = true
 					}
 				}
 				break
@@ -293,7 +326,28 @@ func ConfigureTopIndexers(apiKey string) error {
 	return nil
 }
 
-// AutoInstallDependencies checks for and installs MPV and Prowlarr, pre-seeding config and adding top indexers
+type rodProgressLogger struct {
+	onProgress func(string)
+}
+
+func (l *rodProgressLogger) Println(vs ...interface{}) {
+	msg := fmt.Sprint(vs...)
+	if strings.Contains(msg, "Progress:") {
+		parts := strings.Split(msg, "Progress:")
+		if len(parts) > 1 {
+			pct := strings.TrimSpace(parts[1])
+			if l.onProgress != nil {
+				l.onProgress(fmt.Sprintf("Downloading Chromium Browser: %s", pct))
+			}
+			return
+		}
+	}
+	if l.onProgress != nil && strings.TrimSpace(msg) != "" {
+		l.onProgress(fmt.Sprintf("Chromium Setup: %s", strings.TrimSpace(msg)))
+	}
+}
+
+// AutoInstallDependencies checks for and installs MPV, Prowlarr, and FlareSolverr, pre-seeding config and adding top indexers
 func AutoInstallDependencies(onProgress func(step string)) error {
 	health := CheckSystemHealth()
 
@@ -303,14 +357,27 @@ func AutoInstallDependencies(onProgress func(step string)) error {
 		case "windows":
 			onProgress("Installing Video Player (MPV) via winget...")
 			cmd := exec.Command("winget", "install", "--id", "shinchiro.mpv", "-e", "--accept-source-agreements", "--accept-package-agreements", "--silent")
+			cmd.Stdout = io.Discard
+			cmd.Stderr = io.Discard
 			_ = cmd.Run()
 		case "darwin":
 			onProgress("Installing Video Player (MPV) via Homebrew...")
 			cmd := exec.Command("brew", "install", "mpv")
+			cmd.Stdout = io.Discard
+			cmd.Stderr = io.Discard
 			_ = cmd.Run()
 		default: // linux
-			onProgress("Installing Video Player (MPV) via apt...")
-			cmd := exec.Command("sudo", "apt-get", "install", "-y", "mpv")
+			onProgress("Installing Video Player (MPV) via package manager...")
+			var cmd *exec.Cmd
+			if _, err := exec.LookPath("dnf"); err == nil {
+				cmd = exec.Command("sudo", "dnf", "install", "-y", "mpv")
+			} else if _, err := exec.LookPath("pacman"); err == nil {
+				cmd = exec.Command("sudo", "pacman", "-S", "--noconfirm", "mpv")
+			} else {
+				cmd = exec.Command("sudo", "apt-get", "install", "-y", "mpv")
+			}
+			cmd.Stdout = io.Discard
+			cmd.Stderr = io.Discard
 			_ = cmd.Run()
 		}
 	}
@@ -325,10 +392,14 @@ func AutoInstallDependencies(onProgress func(step string)) error {
 		case "windows":
 			onProgress("Installing Prowlarr via winget...")
 			cmd := exec.Command("winget", "install", "TeamProwlarr.Prowlarr", "--accept-source-agreements", "--accept-package-agreements", "--silent")
+			cmd.Stdout = io.Discard
+			cmd.Stderr = io.Discard
 			_ = cmd.Run()
 		case "darwin":
 			onProgress("Installing Prowlarr via Homebrew Cask...")
 			cmd := exec.Command("brew", "install", "--cask", "prowlarr")
+			cmd.Stdout = io.Discard
+			cmd.Stderr = io.Discard
 			_ = cmd.Run()
 		default: // linux
 			onProgress("On Linux, install Prowlarr via package manager or Docker...")
@@ -350,7 +421,26 @@ func AutoInstallDependencies(onProgress func(step string)) error {
 		apiKey = config.ProwlarrAPIKey
 	}
 
-	// 5. Configure top indexers via API
+	// 4b. Ensure FlareSolverr is downloaded, running, and ready to solve Cloudflare challenges
+	if !IsFlareSolverrRunning() {
+		onProgress("Ensuring FlareSolverr (Cloudflare bypass service)...")
+		if err := StartFlareSolverr(onProgress); err != nil {
+			// Non-fatal: if FlareSolverr fails to auto-download, log progress and continue
+			onProgress("FlareSolverr auto-start skipped (direct indexer queries enabled)")
+		}
+	}
+
+	// 4c. Ensure Browser Engine (Chromium for K-Drama scraper)
+	if _, has := FindBrowserExecutable(); !has {
+		onProgress("Installing Chromium browser engine for K-Drama...")
+		b := launcher.NewBrowser()
+		b.Logger = &rodProgressLogger{onProgress: onProgress}
+		if err := b.Download(); err != nil {
+			onProgress("Browser engine install skipped (K-Drama only)")
+		}
+	}
+
+	// 5. Configure top indexers via API (attaching FlareSolverr proxy to Cloudflare-protected indexers)
 	if apiKey != "" {
 		onProgress("Configuring top indexers (YTS, The Pirate Bay, LimeTorrents, EZTV, TorrentGalaxy)...")
 		if err := ConfigureTopIndexers(apiKey); err != nil {

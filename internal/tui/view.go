@@ -5,6 +5,8 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"bubble-stream/internal/assets"
@@ -303,6 +305,42 @@ func PreRenderCache(img image.Image, widths []int) map[int]map[bool]string {
 	return cache
 }
 
+var pctRegex = regexp.MustCompile(`(\d{1,3})%`)
+
+func parsePercentage(s string) int {
+	match := pctRegex.FindStringSubmatch(s)
+	if len(match) > 1 {
+		if val, err := strconv.Atoi(match[1]); err == nil && val >= 0 && val <= 100 {
+			return val
+		}
+	}
+	return -1
+}
+
+func renderProgressBar(pct int, barWidth int) string {
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	innerWidth := barWidth - 7 // Room for " 100%"
+	if innerWidth < 8 {
+		innerWidth = 8
+	}
+	filled := (pct * innerWidth) / 100
+	empty := innerWidth - filled
+
+	filledStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Bold(true)
+	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	pctStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true)
+
+	filledStr := strings.Repeat("█", filled)
+	emptyStr := strings.Repeat("░", empty)
+
+	return fmt.Sprintf("[%s%s] %s", filledStyle.Render(filledStr), emptyStyle.Render(emptyStr), pctStyle.Render(fmt.Sprintf("%3d%%", pct)))
+}
+
 func renderSystemHealthCheck(m Model) string {
 	width := m.terminalWidth
 	if width == 0 {
@@ -313,96 +351,146 @@ func renderSystemHealthCheck(m Model) string {
 		termHeight = 24
 	}
 
+	cardWidth := 86
+	if width > 0 && width < 90 {
+		cardWidth = width - 4
+	}
+	if cardWidth < 46 {
+		cardWidth = 46
+	}
+	contentWidth := cardWidth - 4
+
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99"))
+	subStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	dangerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
+	compNameStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255"))
+
 	okBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render("[✓ INSTALLED]")
 	runningBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render("[✓ RUNNING  ]")
 	builtinBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true).Render("[✓ BUILT-IN ]")
 	missingBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("[✗ NOT FOUND]")
-	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	subStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	actionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Bold(true)
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true)
+	optionalBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render("[- OPTIONAL ]")
 
 	// Status rows
 	var mpvRow string
 	if m.health.HasMPV {
-		mpvRow = fmt.Sprintf("  %s  MPV Video Player", okBadge)
+		mpvRow = fmt.Sprintf("%s  %s", okBadge, compNameStyle.Render("MPV Video Player"))
 	} else {
-		mpvRow = fmt.Sprintf("  %s  MPV Video Player\n      %s", missingBadge, warnStyle.Render("↳ Video player missing (playback window cannot open)"))
+		mpvRow = fmt.Sprintf("%s  %s\n                %s", missingBadge, compNameStyle.Render("MPV Video Player"), dangerStyle.Render("↳ Video player missing (playback window cannot open)"))
 	}
 
 	var prowlarrRow string
 	if m.health.HasProwlarr {
-		prowlarrRow = fmt.Sprintf("  %s  Prowlarr Torrent Indexer (%s)", runningBadge, m.health.ProwlarrURL)
+		prowlarrRow = fmt.Sprintf("%s  %s %s", runningBadge, compNameStyle.Render("Prowlarr Torrent Indexer"), dimStyle.Render("("+m.health.ProwlarrURL+")"))
 	} else {
-		prowlarrRow = fmt.Sprintf("  %s  Prowlarr Torrent Indexer\n      %s", missingBadge, warnStyle.Render("↳ Western Media is a NO GO (Movies & TV shows disabled)"))
+		prowlarrRow = fmt.Sprintf("%s  %s\n                %s", missingBadge, compNameStyle.Render("Prowlarr Torrent Indexer"), dangerStyle.Render("↳ Western Media is a NO GO (Movies & TV shows disabled)"))
+	}
+
+	var flareRow string
+	if m.health.HasFlareSolverr {
+		flareRow = fmt.Sprintf("%s  %s %s", runningBadge, compNameStyle.Render("FlareSolverr Proxy"), dimStyle.Render("("+m.health.FlareSolverrURL+")"))
+	} else {
+		flareRow = fmt.Sprintf("%s  %s\n                %s", optionalBadge, compNameStyle.Render("FlareSolverr Proxy"), dimStyle.Render("↳ Cloudflare bypass idle (auto-starts on install)"))
 	}
 
 	var browserRow string
 	if m.health.HasBrowser {
-		browserRow = fmt.Sprintf("  %s  Browser Engine (Rod / Edge / Chrome for K-Drama)", okBadge)
+		browserRow = fmt.Sprintf("%s  %s", okBadge, compNameStyle.Render("Browser Engine (Rod / Edge / Chrome for K-Drama)"))
 	} else {
-		browserRow = fmt.Sprintf("  %s  Browser Engine (Edge / Chrome)\n      %s", missingBadge, warnStyle.Render("↳ K-Drama disabled (Anime only)"))
+		browserRow = fmt.Sprintf("%s  %s\n                %s", missingBadge, compNameStyle.Render("Browser Engine (Edge / Chrome)"), warnStyle.Render("↳ K-Drama disabled (Anime only)"))
 	}
 
-	animeRow := fmt.Sprintf("  %s  Pure Go Anime Scraper (AniList / Kitsu / Anikoto)", builtinBadge)
+	animeRow := fmt.Sprintf("%s  %s", builtinBadge, compNameStyle.Render("Pure Go Anime Scraper (AniList / Kitsu / Anikoto)"))
 
 	// Summary box
-	var summaryText string
+	var summaryBlock string
 	if m.health.AllReady() {
-		summaryText = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render("  ✓ All components installed! Full access to Movies, TV Shows, Anime & K-Drama.")
+		summaryBlock = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("10")).
+			Bold(true).
+			Render("✓ All components installed! Full access to Movies, TV Shows, Anime & K-Drama.")
 	} else {
 		var limitations []string
 		if !m.health.HasProwlarr {
 			limitations = append(limitations, "• Western Media is a NO GO (Prowlarr missing)")
 		}
 		if !m.health.HasBrowser {
-			limitations = append(limitations, "• K-Drama disabled (Anime only)")
+			limitations = append(limitations, "• K-Drama disabled (Requires Chromium / Chrome / Edge)")
 		}
 		if !m.health.HasMPV {
 			limitations = append(limitations, "• Video playback disabled (MPV missing)")
 		}
-		summaryText = warnStyle.Render("  Current Limitations:\n  " + strings.Join(limitations, "\n  "))
+		summaryBlock = fmt.Sprintf("%s\n%s",
+			warnStyle.Render("Current Limitations:"),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("221")).Render("  "+strings.Join(limitations, "\n  ")),
+		)
 	}
 
 	// Action 2 text
 	var opt2Text string
-	if m.health.AllReady() {
+	switch {
+	case m.health.AllReady():
 		opt2Text = "Continue to Goovie (Full Access)"
-	} else if m.health.HasBrowser {
+	case m.health.CanWatchWesternMedia() && m.health.CanWatchAnime() && !m.health.HasBrowser:
+		opt2Text = "Continue to Goovie (Watch Movies, TV Shows & Anime)"
+	case m.health.HasBrowser && m.health.CanWatchAnime() && !m.health.HasProwlarr:
 		opt2Text = "Continue to Goovie (Watch Anime + K-Drama)"
-	} else {
+	default:
 		opt2Text = "Continue to Goovie (Watch Anime Only)"
 	}
 
+	key1Badge := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("228")).Bold(true).Render(" 1 ")
+	key2Badge := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("51")).Bold(true).Render(" 2 ")
+	keyQBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Background(lipgloss.Color("238")).Bold(true).Render(" q ")
+
 	actions := fmt.Sprintf(
-		"  %s %s\n  %s %s\n  %s %s",
-		keyStyle.Render("[ 1 ]"), actionStyle.Render("Auto-install everything (MPV + Prowlarr + Top Indexers)"),
-		keyStyle.Render("[ 2 ]"), subStyle.Render(opt2Text),
-		keyStyle.Render("[ q ]"), dimStyle.Render("Quit"),
+		"  %s  %s\n  %s  %s\n  %s  %s",
+		key1Badge, lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Bold(true).Render("Auto-install everything (MPV + Prowlarr + FlareSolverr + Top Indexers)"),
+		key2Badge, lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(opt2Text),
+		keyQBadge, dimStyle.Render("Quit"),
 	)
 
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		titleStyle.Render("  ═══════════════════ GOOVIE SYSTEM SETUP & HEALTH ═══════════════════"),
-		"",
+	divider := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render(strings.Repeat("─", contentWidth))
+
+	rows := []string{
+		lipgloss.JoinHorizontal(lipgloss.Center, titleStyle.Render("⚡ GOOVIE SYSTEM SETUP & HEALTH"), "  ", dimStyle.Render("Diagnostics")),
+		subStyle.Render("Manage streaming drivers, torrent aggregators & browser runtimes"),
+		divider,
 		mpvRow,
-		"",
 		prowlarrRow,
-		"",
+		flareRow,
 		browserRow,
-		"",
 		animeRow,
-		"",
-		"  ─────────────────────────────────────────────────────────────────────",
-		summaryText,
-		"  ─────────────────────────────────────────────────────────────────────",
-		"",
+		divider,
+		summaryBlock,
+		divider,
 		actions,
-		"",
-	)
+	}
 
-	return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, content)
+	cardContent := lipgloss.JoinVertical(lipgloss.Left, rows...)
+
+	padTopBottom := 0
+	if termHeight >= 28 {
+		padTopBottom = 1
+	}
+
+	outerBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(padTopBottom, 2).
+		Width(cardWidth)
+
+	renderedCard := outerBoxStyle.Render(cardContent)
+	cardLines := strings.Count(renderedCard, "\n") + 1
+
+	vAlign := lipgloss.Center
+	if cardLines >= termHeight-2 {
+		vAlign = lipgloss.Top
+	}
+
+	return lipgloss.Place(width, termHeight, lipgloss.Center, vAlign, renderedCard)
 }
 
 func renderInstallingDependencies(m Model) string {
@@ -415,49 +503,143 @@ func renderInstallingDependencies(m Model) string {
 		termHeight = 24
 	}
 
+	cardWidth := 68
+	if width > 0 && width < 72 {
+		cardWidth = width - 4
+	}
+	if cardWidth < 46 {
+		cardWidth = 46
+	}
+	contentWidth := cardWidth - 4
+
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99"))
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true)
+	subStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	key1Badge := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("228")).Bold(true).Render(" 1 ")
+	keyEnterBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("51")).Bold(true).Render(" 2 / Enter ")
+	divider := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render(strings.Repeat("─", contentWidth))
 
 	if !m.installComplete {
 		spinnerView := m.loadingSpinner.View()
 		progressText := lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Bold(true).Render(m.installProgress)
-		hintText := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("Please wait while dependencies are downloaded and configured...")
+		hintText := subStyle.Render("Please wait while dependencies are downloaded and configured...")
 
-		content := lipgloss.JoinVertical(lipgloss.Center,
-			titleStyle.Render("═══════════════════ 1-CLICK AUTO-INSTALLER ═══════════════════"),
-			"\n",
-			lipgloss.JoinHorizontal(lipgloss.Center, spinnerView, " ", progressText),
-			"\n",
+		pct := parsePercentage(m.installProgress)
+		var barBlock string
+		if pct >= 0 {
+			barBlock = renderProgressBar(pct, contentWidth-8)
+		}
+
+		var items []string
+		items = append(items,
+			titleStyle.Render("⚡ 1-CLICK AUTO-INSTALLER"),
+			subStyle.Render("Automated system environment setup"),
+			divider,
+			"",
+			lipgloss.JoinHorizontal(lipgloss.Center, spinnerView, "  ", progressText),
+		)
+		if barBlock != "" {
+			items = append(items, "", barBlock)
+		}
+		items = append(items,
+			"",
+			divider,
 			hintText,
 		)
-		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, content)
+
+		padTopBottom := 0
+		if termHeight >= 28 {
+			padTopBottom = 1
+		}
+
+		boxStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("63")).
+			Padding(padTopBottom, 2).
+			Width(cardWidth)
+
+		content := lipgloss.JoinVertical(lipgloss.Center, items...)
+		renderedCard := boxStyle.Render(content)
+		cardLines := strings.Count(renderedCard, "\n") + 1
+		vAlign := lipgloss.Center
+		if cardLines >= termHeight-2 {
+			vAlign = lipgloss.Top
+		}
+		return lipgloss.Place(width, termHeight, lipgloss.Center, vAlign, renderedCard)
 	}
 
 	if m.installErr != nil {
 		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
-		content := lipgloss.JoinVertical(lipgloss.Center,
-			titleStyle.Render("═══════════════════ 1-CLICK AUTO-INSTALLER ═══════════════════"),
-			"\n",
-			errStyle.Render(fmt.Sprintf("⚠️ Auto-installation finished with an issue: %v", m.installErr)),
-			"\n",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("Some dependencies may need to be installed manually, or try again:"),
-			"\n",
-			fmt.Sprintf("%s Retry Auto-Install  •  %s Continue to Goovie", keyStyle.Render("[ 1 ]"), keyStyle.Render("[ 2 / Enter ]")),
+		notice := errStyle.Render(fmt.Sprintf("⚠️ Auto-installation finished with an issue: %v", m.installErr))
+		subNotice := subStyle.Render("Some dependencies may need to be installed manually, or try again:")
+		actionLine := fmt.Sprintf("%s %s   •   %s %s",
+			key1Badge, lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Render("Retry Auto-Install"),
+			keyEnterBadge, lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Render("Continue to Goovie"),
 		)
-		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, content)
+
+		padTopBottom := 0
+		if termHeight >= 28 {
+			padTopBottom = 1
+		}
+
+		boxStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("203")).
+			Padding(padTopBottom, 2).
+			Width(cardWidth)
+
+		content := lipgloss.JoinVertical(lipgloss.Center,
+			titleStyle.Render("⚡ 1-CLICK AUTO-INSTALLER"),
+			divider,
+			"",
+			notice,
+			"",
+			subNotice,
+			"",
+			divider,
+			"",
+			actionLine,
+		)
+		renderedCard := boxStyle.Render(content)
+		cardLines := strings.Count(renderedCard, "\n") + 1
+		vAlign := lipgloss.Center
+		if cardLines >= termHeight-2 {
+			vAlign = lipgloss.Top
+		}
+		return lipgloss.Place(width, termHeight, lipgloss.Center, vAlign, renderedCard)
 	}
 
 	successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
 	content := lipgloss.JoinVertical(lipgloss.Center,
-		titleStyle.Render("═══════════════════ 1-CLICK AUTO-INSTALLER ═══════════════════"),
-		"\n",
+		titleStyle.Render("✨ 1-CLICK AUTO-INSTALLER"),
+		divider,
+		"",
 		successStyle.Render("✓ All dependencies installed, configured, and ready!"),
-		"\n",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("MPV player is ready, and Prowlarr has been pre-configured with top indexers."),
-		"\n",
-		fmt.Sprintf("Press %s to launch Goovie", keyStyle.Render("[ 2 / Enter ]")),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render("MPV player is ready, and Prowlarr has been pre-configured with top indexers."),
+		"",
+		divider,
+		"",
+		fmt.Sprintf("Press %s to launch Goovie", keyEnterBadge),
 	)
-	return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, content)
+
+	padTopBottom := 0
+	if termHeight >= 28 {
+		padTopBottom = 1
+	}
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("42")).
+		Padding(padTopBottom, 2).
+		Width(cardWidth)
+
+	renderedCard := boxStyle.Render(content)
+	cardLines := strings.Count(renderedCard, "\n") + 1
+	vAlign := lipgloss.Center
+	if cardLines >= termHeight-2 {
+		vAlign = lipgloss.Top
+	}
+	return lipgloss.Place(width, termHeight, lipgloss.Center, vAlign, renderedCard)
 }
 
 func (m Model) View() string {
@@ -518,25 +700,53 @@ func (m Model) View() string {
 		if width < 30 || termHeight < 15 {
 			return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, errorStyle.Render("Terminal too small. Please enlarge."))
 		}
-		
-		subtitleStyle := lipgloss.NewStyle().Align(lipgloss.Center)
-		enterInst := subtitleStyle.Render("[ ENTER ] to continue")
-		setupInst := subtitleStyle.Render("[ S ] Setup & System Health")
-		backInst := subtitleStyle.Render("[ BACKSPACE ] to go back")
-		escInst := subtitleStyle.Render("[ ESC ] to exit")
-		
-		finalUI := lipgloss.JoinVertical(lipgloss.Center,
+
+		tagline := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true).Render("Peer-to-Peer Streaming & Media Aggregator")
+
+		keyEnter := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("51")).Bold(true).Render(" ENTER ")
+		keyS := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("228")).Bold(true).Render("   S   ")
+		keyEsc := lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Background(lipgloss.Color("238")).Bold(true).Render("  ESC  ")
+
+		descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+
+		menuEnter := fmt.Sprintf("  %s   %s", keyEnter, descStyle.Render("Start Streaming (Movies, TV Shows & Anime)"))
+		menuSetup := fmt.Sprintf("  %s   %s", keyS, descStyle.Render("Setup & System Health Check"))
+		menuQuit := fmt.Sprintf("  %s   %s", keyEsc, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("Quit Goovie"))
+
+		var notice string
+		if !m.health.AllReady() {
+			notice = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("⚠️  Some components need setup. Press [ S ] for 1-Click Auto-Installer.")
+		}
+
+		menuBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("63")).
+			Padding(1, 3).
+			Render(lipgloss.JoinVertical(lipgloss.Left,
+				menuEnter,
+				"",
+				menuSetup,
+				"",
+				menuQuit,
+			))
+
+		items := []string{
 			m.cachedFrontTitle,
-			"\n\n",
-			enterInst,
-			"\n",
-			setupInst,
-			"\n",
-			backInst,
-			"\n",
-			escInst,
-		)
-		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, finalUI)
+			tagline,
+			"",
+			menuBox,
+		}
+		if notice != "" {
+			items = append(items, "", notice)
+		}
+
+		finalUI := lipgloss.JoinVertical(lipgloss.Center, items...)
+		cardLines := strings.Count(finalUI, "\n") + 1
+		vAlign := lipgloss.Center
+		if cardLines >= termHeight-1 {
+			vAlign = lipgloss.Top
+		}
+		return lipgloss.Place(width, termHeight, lipgloss.Center, vAlign, finalUI)
 
 	case StateModeSelect:
 		width := m.terminalWidth
@@ -559,20 +769,20 @@ func (m Model) View() string {
 
 		movieCard := lipgloss.JoinVertical(lipgloss.Center,
 			m.cacheMovies[m.activeWCell][m.cursor == 0],
-			"\n"+getStyledLabel(labels[0].label, m.activeWCell, m.cursor == 0, labels[0].r, labels[0].g, labels[0].b),
+			getStyledLabel(labels[0].label, m.activeWCell, m.cursor == 0, labels[0].r, labels[0].g, labels[0].b),
 		)
 		tvCard := lipgloss.JoinVertical(lipgloss.Center,
 			m.cacheTV[m.activeWCell][m.cursor == 1],
-			"\n"+getStyledLabel(labels[1].label, m.activeWCell, m.cursor == 1, labels[1].r, labels[1].g, labels[1].b),
+			getStyledLabel(labels[1].label, m.activeWCell, m.cursor == 1, labels[1].r, labels[1].g, labels[1].b),
 		)
 		animeCard := lipgloss.JoinVertical(lipgloss.Center,
 			m.cacheAnime[m.activeWCell][m.cursor == 2],
-			"\n"+getStyledLabel(labels[2].label, m.activeWCell, m.cursor == 2, labels[2].r, labels[2].g, labels[2].b),
+			getStyledLabel(labels[2].label, m.activeWCell, m.cursor == 2, labels[2].r, labels[2].g, labels[2].b),
 		)
 
 		var cardsBlock string
 		if width < 100 {
-			cardsBlock = lipgloss.JoinVertical(lipgloss.Center, movieCard, "", tvCard, "", animeCard)
+			cardsBlock = lipgloss.JoinVertical(lipgloss.Center, movieCard, tvCard, animeCard)
 		} else {
 			spacingPad := strings.Repeat(" ", 6)
 			cardsBlock = lipgloss.JoinHorizontal(lipgloss.Top, movieCard, spacingPad, tvCard, spacingPad, animeCard)
@@ -581,15 +791,31 @@ func (m Model) View() string {
 		footerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Align(lipgloss.Center)
 		footer := footerStyle.Render("[← / →] Select • [Enter] Choose • [s] Setup / Health • [q] Quit")
 
+		titleBlock := m.cachedTitle
+		if termHeight < 22 {
+			titleBlock = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")).Render("⚡ SELECT GENRE")
+		}
+
+		gap := ""
+		if termHeight >= 30 {
+			gap = "\n"
+		}
+
 		finalUI := lipgloss.JoinVertical(lipgloss.Center,
-			m.cachedTitle,
-			"\n\n",
+			titleBlock,
+			gap,
 			cardsBlock,
-			"\n\n",
+			gap,
 			footer,
 		)
 
-		return lipgloss.Place(width, termHeight, lipgloss.Center, lipgloss.Center, finalUI)
+		cardLines := strings.Count(finalUI, "\n") + 1
+		vAlign := lipgloss.Center
+		if cardLines >= termHeight-1 {
+			vAlign = lipgloss.Top
+		}
+
+		return lipgloss.Place(width, termHeight, lipgloss.Center, vAlign, finalUI)
 	case StateOriginSelect:
 		width := m.terminalWidth
 		if width == 0 {

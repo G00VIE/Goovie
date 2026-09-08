@@ -59,10 +59,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.health = msg.Health
 		if m.health.AllReady() {
 			m.state = StateFrontPage
-			return m, nil
+			return m, tea.ClearScreen
 		}
 		m.state = StateSystemHealthCheck
-		return m, nil
+		return m, tea.ClearScreen
 
 	case InstallProgressMsg:
 		m.installProgress = msg.Step
@@ -75,7 +75,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.installComplete = true
 		m.installErr = msg.Err
 		m.health = sysutil.CheckSystemHealth()
-		return m, nil
+		return m, tea.ClearScreen
 
 	case tea.WindowSizeMsg:
 		m.terminalHeight = msg.Height
@@ -83,19 +83,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		spacing := 6
 		wCell := (m.terminalWidth - (2 * spacing) - 4) / 3
-		maxHeight := m.terminalHeight / 2
-		if wCell > 2*maxHeight {
-			wCell = 2 * maxHeight
+
+		// Constrain image size based on available vertical height:
+		// Non-image overhead in StateModeSelect is ~10-11 lines (title, card label, footer, spacing).
+		// Since braille cells are 2px wide and 4px tall with 1:1 square images, image cell height is wCell / 2.
+		// Thus, wCell should not exceed (available height) * 2.
+		maxImgHeight := m.terminalHeight - 11
+		if maxImgHeight < 6 {
+			maxImgHeight = 6
 		}
+		maxWFromHeight := maxImgHeight * 2
+		if wCell > maxWFromHeight {
+			wCell = maxWFromHeight
+		}
+
 		if wCell > 65 {
 			wCell = 65
 		}
-		if wCell < 25 {
-			wCell = 25
+		if wCell < 18 {
+			wCell = 18
 		}
 
 		bestDist := 9999
-		bestW := 50
+		bestW := 26
 		for k := range m.cacheMovies {
 			dist := k - wCell
 			if dist < 0 {
@@ -117,7 +127,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			if m.state == StateSystemHealthCheck {
 				m.state = StateFrontPage
-				return m, nil
+				return m, tea.ClearScreen
 			}
 			return m, tea.Quit
 		case "q":
@@ -128,7 +138,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == StateModeSelect || m.state == StateFrontPage {
 				m.health = sysutil.CheckSystemHealth()
 				m.state = StateSystemHealthCheck
-				return m, nil
+				return m, tea.ClearScreen
 			}
 		case "up":
 			if m.state != StateModeSelect && m.cursor > 0 {
@@ -200,12 +210,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.state {
 			case StateSystemHealthCheck:
 				m.state = StateFrontPage
-				return m, nil
+				return m, tea.ClearScreen
 
 			case StateInstallingDependencies:
 				if m.installComplete {
 					m.state = StateFrontPage
-					return m, nil
+					return m, tea.ClearScreen
 				}
 				return m, nil
 
@@ -214,12 +224,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if key != "" {
 					config.SaveConfig(key)
 					m.state = StateFrontPage
+					return m, tea.ClearScreen
 				}
 				return m, nil
 
 			case StateFrontPage:
 				m.state = StateModeSelect
-				return m, nil
+				return m, tea.ClearScreen
 
 			case StateModeSelect:
 				if m.cursor == 0 {
@@ -510,15 +521,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.installErr = nil
 					m.installComplete = false
 					m.installChan = make(chan string, 10)
-					return m, tea.Batch(m.loadingSpinner.Tick, startAutoInstallCmd(m.installChan), waitForInstallProgress(m.installChan))
+					return m, tea.Batch(tea.ClearScreen, m.loadingSpinner.Tick, startAutoInstallCmd(m.installChan), waitForInstallProgress(m.installChan))
 				} else if msg.String() == "2" {
 					m.state = StateFrontPage
-					return m, nil
+					return m, tea.ClearScreen
 				}
 			} else if m.state == StateInstallingDependencies && m.installComplete {
 				if msg.String() == "2" {
 					m.state = StateFrontPage
-					return m, nil
+					return m, tea.ClearScreen
 				}
 			} else if m.state == StateTVFileSelect {
 				if len(m.tvFileSearch) < 4 { // Prevent infinite typing
