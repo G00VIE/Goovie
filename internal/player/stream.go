@@ -19,6 +19,7 @@ import (
 
 	"bubble-stream/internal/bittorrent"
 	"bubble-stream/internal/config"
+	"bubble-stream/internal/sysutil"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -354,6 +355,11 @@ func (p *VibeProxy) serveKey(w http.ResponseWriter, r *http.Request, session *Vi
 }
 
 func LaunchPlayer(target string, fileIndex string, referer string, subtitleURL string) tea.Cmd {
+	mpvBin := "mpv"
+	if p := sysutil.FindMPVExecutable(); p != "" {
+		mpvBin = p
+	}
+
 	if strings.HasPrefix(target, "http") {
 		// Anime path uses pure mpv with optional referer and subtitle
 		var args []string
@@ -364,7 +370,7 @@ func LaunchPlayer(target string, fileIndex string, referer string, subtitleURL s
 			args = append(args, "--sub-file="+subtitleURL)
 		}
 		args = append(args, target)
-		c := exec.Command("mpv", args...)
+		c := exec.Command(mpvBin, args...)
 		c.Stdout = io.Discard
 		c.Stderr = io.Discard
 		return func() tea.Msg {
@@ -394,7 +400,7 @@ func LaunchPlayer(target string, fileIndex string, referer string, subtitleURL s
 		}
 		defer session.Close()
 
-		c := exec.Command("mpv", session.StreamURL)
+		c := exec.Command(mpvBin, session.StreamURL)
 		c.Stdout = io.Discard
 		c.Stderr = io.Discard
 		err = c.Run()

@@ -189,7 +189,10 @@ func FetchAsianEpisodesCmd(show AsianShow) tea.Cmd {
 
 func FetchAsianStreamCmd(watchURL string) tea.Cmd {
 	return func() tea.Msg {
-		l := launcher.New().Leakless(false)
+		l := launcher.New().Leakless(false).Headless(true)
+		if bin, has := launcher.LookPath(); has {
+			l = l.Bin(bin)
+		}
 		u, err := l.Launch()
 		if err != nil {
 			return prowlarr.ErrMsg{Err: fmt.Errorf("failed to launch browser: %v", err)}

@@ -1,6 +1,7 @@
 package sysutil
 
 import (
+	"archive/zip"
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
@@ -17,6 +18,168 @@ import (
 
 	"bubble-stream/internal/config"
 )
+
+// FindMPVExecutable locates the mpv player binary across common system install locations
+func FindMPVExecutable() string {
+	ensurePath := func(p string) string {
+		if p != "" {
+			dir := filepath.Dir(p)
+			cur := os.Getenv("PATH")
+			if !strings.Contains(cur, dir) {
+				_ = os.Setenv("PATH", dir+string(os.PathListSeparator)+cur)
+			}
+		}
+		return p
+	}
+
+	if p, err := exec.LookPath("mpv"); err == nil {
+		return ensurePath(p)
+	}
+	if p, err := exec.LookPath("mpv.exe"); err == nil {
+		return ensurePath(p)
+	}
+	if p, err := exec.LookPath("mpv.com"); err == nil {
+		return ensurePath(p)
+	}
+
+	if runtime.GOOS == "windows" {
+		localApp := os.Getenv("LOCALAPPDATA")
+		progFiles := os.Getenv("ProgramFiles")
+		progFilesX86 := os.Getenv("ProgramFiles(x86)")
+		userProf := os.Getenv("USERPROFILE")
+		appData := os.Getenv("APPDATA")
+
+		// 1. Check WinGet Packages directories (glob pattern)
+		if localApp != "" {
+			matches, _ := filepath.Glob(filepath.Join(localApp, "Microsoft", "WinGet", "Packages", "*mpv*", "mpv.exe"))
+			if len(matches) > 0 {
+				return ensurePath(matches[0])
+			}
+			matchesCom, _ := filepath.Glob(filepath.Join(localApp, "Microsoft", "WinGet", "Packages", "*mpv*", "mpv.com"))
+			if len(matchesCom) > 0 {
+				return ensurePath(matchesCom[0])
+			}
+		}
+
+		candidates := []string{
+			filepath.Join(localApp, "Microsoft", "WinGet", "Links", "mpv.exe"),
+			filepath.Join(localApp, "Programs", "mpv", "mpv.exe"),
+			filepath.Join(localApp, "Programs", "mpv", "mpv.com"),
+			filepath.Join(localApp, "Programs", "MPV Player", "mpv.exe"),
+			filepath.Join(progFiles, "MPV Player", "mpv.exe"),
+			filepath.Join(progFiles, "MPV Player", "mpv.com"),
+			filepath.Join(progFiles, "mpv", "mpv.exe"),
+			filepath.Join(progFiles, "mpv", "mpv.com"),
+			filepath.Join(progFilesX86, "mpv", "mpv.exe"),
+			filepath.Join(progFilesX86, "mpv", "mpv.com"),
+			filepath.Join(appData, "mpv", "mpv.exe"),
+			filepath.Join(userProf, "scoop", "shims", "mpv.exe"),
+			`C:\ProgramData\chocolatey\bin\mpv.exe`,
+		}
+		for _, c := range candidates {
+			if c != "" {
+				if _, err := os.Stat(c); err == nil {
+					return ensurePath(c)
+				}
+			}
+		}
+	} else if runtime.GOOS == "darwin" {
+		candidates := []string{
+			"/opt/homebrew/bin/mpv",
+			"/usr/local/bin/mpv",
+			"/Applications/mpv.app/Contents/MacOS/mpv",
+		}
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				return ensurePath(c)
+			}
+		}
+	} else { // Linux
+		candidates := []string{
+			"/usr/bin/mpv",
+			"/usr/local/bin/mpv",
+			"/var/lib/flatpak/exports/bin/io.mpv.Mpv",
+			"/snap/bin/mpv",
+		}
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				return ensurePath(c)
+			}
+		}
+	}
+
+	return ""
+}
+
+func downloadAndExtractMPVWindows(onProgress func(string)) error {
+	localApp := os.Getenv("LOCALAPPDATA")
+	if localApp == "" {
+		localApp = `C:\Users\Default\AppData\Local`
+	}
+	targetDir := filepath.Join(localApp, "Programs", "mpv")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return err
+	}
+
+	zipURL := "https://github.com/mpv-player/mpv/releases/download/v0.41.0/mpv-v0.41.0-x86_64-pc-windows-msvc.zip"
+	if onProgress != nil {
+		onProgress("Downloading portable MPV video player...")
+	}
+
+	client := &http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Get(zipURL)
+	if err != nil {
+		return fmt.Errorf("failed to download MPV: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad status downloading MPV: %d", resp.StatusCode)
+	}
+
+	tempZip := filepath.Join(os.TempDir(), "mpv_portable.zip")
+	out, err := os.Create(tempZip)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, resp.Body)
+	out.Close()
+	if err != nil {
+		_ = os.Remove(tempZip)
+		return err
+	}
+	defer os.Remove(tempZip)
+
+	if onProgress != nil {
+		onProgress("Extracting MPV video player...")
+	}
+	r, err := zip.OpenReader(tempZip)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		destPath := filepath.Join(targetDir, f.Name)
+		if f.FileInfo().IsDir() {
+			_ = os.MkdirAll(destPath, 0755)
+		} else {
+			_ = os.MkdirAll(filepath.Dir(destPath), 0755)
+			rc, err := f.Open()
+			if err != nil {
+				continue
+			}
+			destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+			if err == nil {
+				_, _ = io.Copy(destFile, rc)
+				destFile.Close()
+			}
+			rc.Close()
+		}
+	}
+
+	return nil
+}
 
 // FindProwlarrExecutable checks common installation paths on Windows, macOS, and Linux
 func FindProwlarrExecutable() string {
@@ -357,16 +520,20 @@ func ConfigureTopIndexers(apiKey string) error {
 
 // AutoInstallDependencies checks for and installs MPV and Prowlarr, pre-seeding config and adding top indexers
 func AutoInstallDependencies(onProgress func(step string)) error {
-	health := CheckSystemHealth()
-
 	// 1. Install MPV if missing
-	if !health.HasMPV {
+	if FindMPVExecutable() == "" {
 		switch runtime.GOOS {
 		case "windows":
 			onProgress("Installing Video Player (MPV) via winget...")
-			cmd := exec.Command("winget", "install", "--id", "shinchiro.mpv", "-e", "--accept-source-agreements", "--accept-package-agreements", "--silent")
+			// Try portable MSVC winget package first (silent, zero admin/UAC prompt required)
+			cmd := exec.Command("winget", "install", "--id", "mpv-player.mpv-CI.MSVC", "-e", "--accept-source-agreements", "--accept-package-agreements", "--silent")
 			HideConsoleWindow(cmd)
 			_ = cmd.Run()
+
+			// If winget didn't locate or install it, download official portable build directly
+			if FindMPVExecutable() == "" {
+				_ = downloadAndExtractMPVWindows(onProgress)
+			}
 		case "darwin":
 			onProgress("Installing Video Player (MPV) via Homebrew...")
 			cmd := exec.Command("brew", "install", "mpv")

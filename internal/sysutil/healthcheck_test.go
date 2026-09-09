@@ -2,15 +2,20 @@ package sysutil
 
 import (
 	"testing"
+
+	"github.com/go-rod/rod/lib/launcher"
 )
 
 func TestCheckSystemHealth(t *testing.T) {
+	path, has := launcher.LookPath()
+	t.Logf("launcher.LookPath() has=%v, path=%s", has, path)
+
+	mpv := FindMPVExecutable()
+	t.Logf("FindMPVExecutable() = %s", mpv)
+
 	health := CheckSystemHealth()
-	// Should detect HasBrowser on Windows (Edge exists)
-	if !health.HasBrowser {
-		t.Log("Note: No browser detected on host")
-	}
-	// Verify helper methods don't panic
+	t.Logf("Health: HasMPV=%v, HasBrowser=%v, HasProwlarr=%v, BrowserPath=%s", health.HasMPV, health.HasBrowser, health.HasProwlarr, health.BrowserPath)
+
 	_ = health.AllReady()
 	_ = health.CanWatchAnime()
 	_ = health.CanWatchKDrama()

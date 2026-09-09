@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"time"
 
 	"bubble-stream/internal/config"
@@ -46,7 +45,7 @@ func CheckSystemHealth() SystemHealth {
 	var health SystemHealth
 
 	// 1. Check MPV
-	if mpvPath, err := exec.LookPath("mpv"); err == nil {
+	if mpvPath := FindMPVExecutable(); mpvPath != "" {
 		health.HasMPV = true
 		health.MPVPath = mpvPath
 	}
