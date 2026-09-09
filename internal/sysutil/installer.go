@@ -356,6 +356,7 @@ func AutoInstallDependencies(onProgress func(step string)) error {
 		case "windows":
 			onProgress("Installing Video Player (MPV) via winget...")
 			cmd := exec.Command("winget", "install", "--id", "shinchiro.mpv", "-e", "--accept-source-agreements", "--accept-package-agreements", "--silent")
+			HideConsoleWindow(cmd)
 			_ = cmd.Run()
 		case "darwin":
 			onProgress("Installing Video Player (MPV) via Homebrew...")
@@ -377,7 +378,8 @@ func AutoInstallDependencies(onProgress func(step string)) error {
 		switch runtime.GOOS {
 		case "windows":
 			onProgress("Installing Prowlarr via winget...")
-			cmd := exec.Command("winget", "install", "TeamProwlarr.Prowlarr", "--accept-source-agreements", "--accept-package-agreements", "--silent")
+			cmd := exec.Command("winget", "install", "--id", "TeamProwlarr.Prowlarr", "-e", "--accept-source-agreements", "--accept-package-agreements", "--silent")
+			HideConsoleWindow(cmd)
 			_ = cmd.Run()
 		case "darwin":
 			onProgress("Installing Prowlarr via Homebrew Cask...")

@@ -61,8 +61,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = StateFrontPage
 			return m, nil
 		}
-		m.state = StateSystemHealthCheck
-		return m, nil
+		// Autonomous: automatically start installing/configuring missing dependencies
+		m.state = StateInstallingDependencies
+		m.installProgress = "Auto-configuring missing dependencies (MPV / Prowlarr / Indexers)..."
+		m.installErr = nil
+		m.installComplete = false
+		m.installChan = make(chan string, 10)
+		return m, tea.Batch(m.loadingSpinner.Tick, startAutoInstallCmd(m.installChan), waitForInstallProgress(m.installChan))
 
 	case InstallProgressMsg:
 		m.installProgress = msg.Step
@@ -75,6 +80,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.installComplete = true
 		m.installErr = msg.Err
 		m.health = sysutil.CheckSystemHealth()
+		if m.installErr == nil && m.health.AllReady() {
+			m.state = StateFrontPage
+			return m, nil
+		}
+		m.state = StateSystemHealthCheck
 		return m, nil
 
 	case tea.WindowSizeMsg:
