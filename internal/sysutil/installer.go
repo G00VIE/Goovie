@@ -75,11 +75,41 @@ func FindProwlarrExecutable() string {
 	return ""
 }
 
+func disableBrowserInExistingConfig() {
+	var paths []string
+	home, _ := os.UserHomeDir()
+	if runtime.GOOS == "windows" {
+		progData := os.Getenv("ProgramData")
+		if progData == "" {
+			progData = `C:\ProgramData`
+		}
+		paths = append(paths,
+			filepath.Join(progData, "Prowlarr", "config.xml"),
+			filepath.Join(os.Getenv("LOCALAPPDATA"), "Prowlarr", "config.xml"),
+			filepath.Join(os.Getenv("APPDATA"), "Prowlarr", "config.xml"),
+		)
+	} else if home != "" {
+		paths = append(paths, filepath.Join(home, ".config", "Prowlarr", "config.xml"))
+	}
+
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err == nil {
+			content := string(data)
+			if strings.Contains(content, "<LaunchBrowser>True</LaunchBrowser>") {
+				newContent := strings.ReplaceAll(content, "<LaunchBrowser>True</LaunchBrowser>", "<LaunchBrowser>False</LaunchBrowser>")
+				_ = os.WriteFile(p, []byte(newContent), 0644)
+			}
+		}
+	}
+}
+
 // PreseedProwlarrConfig ensures config.xml exists with AuthenticationMethod=None
 // and a valid ApiKey, completely skipping the first-run browser credential wizard.
 func PreseedProwlarrConfig() (string, error) {
 	// 1. Check if an existing config already has an API key
 	if config.AutoDetectAPIKey() && config.ProwlarrAPIKey != "" {
+		disableBrowserInExistingConfig()
 		return config.ProwlarrAPIKey, nil
 	}
 
@@ -125,6 +155,7 @@ func PreseedProwlarrConfig() (string, error) {
   <EnableSsl>False</EnableSsl>
   <ApiKey>%s</ApiKey>
   <AuthenticationMethod>None</AuthenticationMethod>
+  <LaunchBrowser>False</LaunchBrowser>
   <Branch>master</Branch>
   <LogLevel>info</LogLevel>
 </Config>`, apiKey)
@@ -138,6 +169,7 @@ func PreseedProwlarrConfig() (string, error) {
 	if seededPath == "" {
 		// If both existed or couldn't write, check detected key again
 		if config.AutoDetectAPIKey() && config.ProwlarrAPIKey != "" {
+			disableBrowserInExistingConfig()
 			return config.ProwlarrAPIKey, nil
 		}
 	}
@@ -173,8 +205,8 @@ func StartProwlarr() error {
 		return fmt.Errorf("failed to start Prowlarr: %w", err)
 	}
 
-	// Poll until localhost:9696 is ready (up to 30 seconds)
-	for i := 0; i < 60; i++ {
+	// Poll until localhost:9696 is ready (up to 60 seconds)
+	for i := 0; i < 120; i++ {
 		time.Sleep(500 * time.Millisecond)
 		resp, err := http.Get("http://localhost:9696/ping")
 		if err == nil {
@@ -220,7 +252,7 @@ func ConfigureTopIndexers(apiKey string) error {
 	// 2. Fetch available indexer schemas, retrying if Prowlarr is still loading them on startup
 	schemaURL := "http://localhost:9696/api/v1/indexer/schema"
 	var schemas []map[string]interface{}
-	for attempt := 0; attempt < 15; attempt++ {
+	for attempt := 0; attempt < 30; attempt++ {
 		sReq, err := http.NewRequest("GET", schemaURL, nil)
 		if err == nil {
 			sReq.Header.Set("X-Api-Key", apiKey)
@@ -366,9 +398,19 @@ func AutoInstallDependencies(onProgress func(step string)) error {
 	time.Sleep(3 * time.Second)
 
 	// Re-check detected API key if needed
-	_ = config.AutoDetectAPIKey()
-	if config.ProwlarrAPIKey != "" {
-		apiKey = config.ProwlarrAPIKey
+	if apiKey == "" {
+		for attempt := 0; attempt < 10; attempt++ {
+			if config.AutoDetectAPIKey() && config.ProwlarrAPIKey != "" {
+				apiKey = config.ProwlarrAPIKey
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	} else {
+		_ = config.AutoDetectAPIKey()
+		if config.ProwlarrAPIKey != "" {
+			apiKey = config.ProwlarrAPIKey
+		}
 	}
 
 	// 5. Configure top indexers via API
