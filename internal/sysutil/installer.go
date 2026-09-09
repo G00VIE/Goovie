@@ -20,6 +20,12 @@ import (
 
 // FindProwlarrExecutable checks common installation paths on Windows, macOS, and Linux
 func FindProwlarrExecutable() string {
+	if p, err := exec.LookPath("Prowlarr.Console"); err == nil {
+		return p
+	}
+	if p, err := exec.LookPath("prowlarr-console"); err == nil {
+		return p
+	}
 	if p, err := exec.LookPath("Prowlarr"); err == nil {
 		return p
 	}
@@ -29,12 +35,24 @@ func FindProwlarrExecutable() string {
 
 	localApp := os.Getenv("LOCALAPPDATA")
 	progFiles := os.Getenv("ProgramFiles")
+	progFilesX86 := os.Getenv("ProgramFiles(x86)")
+	progData := os.Getenv("ProgramData")
+	if progData == "" {
+		progData = `C:\ProgramData`
+	}
 
 	candidates := []string{
-		`C:\ProgramData\Prowlarr\bin\Prowlarr.exe`,
+		filepath.Join(progData, "Prowlarr", "bin", "Prowlarr.Console.exe"),
+		filepath.Join(progData, "Prowlarr", "bin", "Prowlarr.exe"),
+		filepath.Join(progFiles, "Prowlarr", "bin", "Prowlarr.Console.exe"),
 		filepath.Join(progFiles, "Prowlarr", "bin", "Prowlarr.exe"),
+		filepath.Join(progFiles, "Prowlarr", "Prowlarr.Console.exe"),
 		filepath.Join(progFiles, "Prowlarr", "Prowlarr.exe"),
+		filepath.Join(progFilesX86, "Prowlarr", "bin", "Prowlarr.Console.exe"),
+		filepath.Join(progFilesX86, "Prowlarr", "bin", "Prowlarr.exe"),
+		filepath.Join(localApp, "Programs", "Prowlarr", "Prowlarr.Console.exe"),
 		filepath.Join(localApp, "Programs", "Prowlarr", "Prowlarr.exe"),
+		filepath.Join(localApp, "Prowlarr", "bin", "Prowlarr.Console.exe"),
 		filepath.Join(localApp, "Prowlarr", "bin", "Prowlarr.exe"),
 		// macOS
 		"/Applications/Prowlarr.app/Contents/MacOS/Prowlarr",
@@ -48,8 +66,10 @@ func FindProwlarrExecutable() string {
 	}
 
 	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c
+		if c != "" {
+			if _, err := os.Stat(c); err == nil {
+				return c
+			}
 		}
 	}
 	return ""
@@ -146,6 +166,7 @@ func StartProwlarr() error {
 		flag = "/nobrowser"
 	}
 	cmd := exec.Command(exe, flag)
+	HideConsoleWindow(cmd)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	if err := cmd.Start(); err != nil {

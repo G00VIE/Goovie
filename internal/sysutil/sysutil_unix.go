@@ -11,3 +11,8 @@ import (
 func SetCmdLine(cmd *exec.Cmd, cmdLine string) {
 	// Not applicable on non-Windows systems
 }
+
+// HideConsoleWindow is a no-op on non-Windows platforms
+func HideConsoleWindow(cmd *exec.Cmd) {
+}
+

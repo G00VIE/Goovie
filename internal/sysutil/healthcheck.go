@@ -100,5 +100,15 @@ func CheckSystemHealth() SystemHealth {
 		}
 	}
 
+	// 4. Auto-heal: If Prowlarr is installed locally on the system but not running, automatically start it!
+	if !health.HasProwlarr && FindProwlarrExecutable() != "" {
+		if err := StartProwlarr(); err == nil {
+			health.HasProwlarr = true
+			if config.ProwlarrAPIKey == "" {
+				_ = config.AutoDetectAPIKey()
+			}
+		}
+	}
+
 	return health
 }

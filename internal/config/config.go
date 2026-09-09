@@ -77,7 +77,15 @@ func AutoDetectAPIKey() bool {
 
 	home, _ := os.UserHomeDir()
 	if runtime.GOOS == "windows" {
-		prowlarrConfigPaths = append(prowlarrConfigPaths, `C:\ProgramData\Prowlarr\config.xml`)
+		progData := os.Getenv("ProgramData")
+		if progData == "" {
+			progData = `C:\ProgramData`
+		}
+		prowlarrConfigPaths = append(prowlarrConfigPaths,
+			filepath.Join(progData, "Prowlarr", "config.xml"),
+			filepath.Join(os.Getenv("LOCALAPPDATA"), "Prowlarr", "config.xml"),
+			filepath.Join(os.Getenv("APPDATA"), "Prowlarr", "config.xml"),
+		)
 	} else if runtime.GOOS == "darwin" {
 		if home != "" {
 			prowlarrConfigPaths = append(prowlarrConfigPaths, filepath.Join(home, ".config", "Prowlarr", "config.xml"))

@@ -15,3 +15,13 @@ func SetCmdLine(cmd *exec.Cmd, cmdLine string) {
 	}
 	cmd.SysProcAttr.CmdLine = cmdLine
 }
+
+// HideConsoleWindow configures the command to run hidden without popping up a console window
+func HideConsoleWindow(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.HideWindow = true
+	cmd.SysProcAttr.CreationFlags |= 0x08000000 // CREATE_NO_WINDOW
+}
+
