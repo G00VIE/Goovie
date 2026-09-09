@@ -14,3 +14,8 @@ goovie.go
 
 # Go
 /vendor/
+
+# Root debug and screenshots
+/goovie.png
+/prowlar.png
+/torrent_debug.txt

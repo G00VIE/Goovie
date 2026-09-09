@@ -1,11 +1,13 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 var (
@@ -138,6 +140,12 @@ func AutoDetectAPIKey() bool {
 			filepath.Join(os.Getenv("LOCALAPPDATA"), "Prowlarr", "config.xml"),
 			filepath.Join(os.Getenv("APPDATA"), "Prowlarr", "config.xml"),
 		)
+		if home != "" {
+			prowlarrConfigPaths = append(prowlarrConfigPaths,
+				filepath.Join(home, "AppData", "Local", "Prowlarr", "config.xml"),
+				filepath.Join(home, "AppData", "Roaming", "Prowlarr", "config.xml"),
+			)
+		}
 	} else if runtime.GOOS == "darwin" {
 		if home != "" {
 			prowlarrConfigPaths = append(prowlarrConfigPaths, filepath.Join(home, ".config", "Prowlarr", "config.xml"))
@@ -153,9 +161,13 @@ func AutoDetectAPIKey() bool {
 	for _, p := range prowlarrConfigPaths {
 		data, err := os.ReadFile(p)
 		if err == nil {
+			trimmed := bytes.TrimSpace(data)
+			if len(trimmed) == 0 || bytes.ContainsRune(trimmed, 0) {
+				continue
+			}
 			var xmlCfg prowlarrXMLConfig
-			if err := xml.Unmarshal(data, &xmlCfg); err == nil && xmlCfg.ApiKey != "" {
-				ProwlarrAPIKey = xmlCfg.ApiKey
+			if err := xml.Unmarshal(trimmed, &xmlCfg); err == nil && strings.TrimSpace(xmlCfg.ApiKey) != "" {
+				ProwlarrAPIKey = strings.TrimSpace(xmlCfg.ApiKey)
 				return true
 			}
 		}

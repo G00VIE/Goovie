@@ -6,12 +6,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -239,7 +241,21 @@ func FindProwlarrExecutable() string {
 	return ""
 }
 
-func disableBrowserInExistingConfig() {
+// ProwlarrConfigXML models the structure of Prowlarr's config.xml for validation and parsing
+type ProwlarrConfigXML struct {
+	XMLName                xml.Name `xml:"Config"`
+	Port                   string   `xml:"Port"`
+	BindAddress            string   `xml:"BindAddress"`
+	ApiKey                 string   `xml:"ApiKey"`
+	AuthenticationMethod   string   `xml:"AuthenticationMethod"`
+	AuthenticationRequired string   `xml:"AuthenticationRequired"`
+	LaunchBrowser          string   `xml:"LaunchBrowser"`
+	Branch                 string   `xml:"Branch"`
+	LogLevel               string   `xml:"LogLevel"`
+}
+
+// GetProwlarrConfigPaths returns candidate paths for Prowlarr config.xml across all supported platforms
+func GetProwlarrConfigPaths() []string {
 	var paths []string
 	home, _ := os.UserHomeDir()
 	if runtime.GOOS == "windows" {
@@ -247,59 +263,200 @@ func disableBrowserInExistingConfig() {
 		if progData == "" {
 			progData = `C:\ProgramData`
 		}
-		paths = append(paths,
-			filepath.Join(progData, "Prowlarr", "config.xml"),
-			filepath.Join(os.Getenv("LOCALAPPDATA"), "Prowlarr", "config.xml"),
-			filepath.Join(os.Getenv("APPDATA"), "Prowlarr", "config.xml"),
-		)
-	} else if home != "" {
-		paths = append(paths, filepath.Join(home, ".config", "Prowlarr", "config.xml"))
+		localApp := os.Getenv("LOCALAPPDATA")
+		appData := os.Getenv("APPDATA")
+
+		// C:\ProgramData\Prowlarr is the primary location used by Prowlarr on Windows
+		paths = append(paths, filepath.Join(progData, "Prowlarr", "config.xml"))
+		if localApp != "" {
+			paths = append(paths, filepath.Join(localApp, "Prowlarr", "config.xml"))
+		}
+		if appData != "" {
+			paths = append(paths, filepath.Join(appData, "Prowlarr", "config.xml"))
+		}
+		if home != "" {
+			paths = append(paths,
+				filepath.Join(home, "AppData", "Local", "Prowlarr", "config.xml"),
+				filepath.Join(home, "AppData", "Roaming", "Prowlarr", "config.xml"),
+			)
+		}
+	} else if runtime.GOOS == "darwin" {
+		if home != "" {
+			paths = append(paths,
+				filepath.Join(home, ".config", "Prowlarr", "config.xml"),
+				filepath.Join(home, "Library", "Application Support", "Prowlarr", "config.xml"),
+			)
+		}
+	} else { // linux
+		if home != "" {
+			paths = append(paths, filepath.Join(home, ".config", "Prowlarr", "config.xml"))
+		}
+		paths = append(paths, "/var/lib/prowlarr/config.xml")
 	}
+	return paths
+}
+
+// ValidateProwlarrConfigFile checks whether the given config.xml is valid XML, non-empty,
+// has no corruption (e.g. null bytes from crashes), and contains a non-empty ApiKey.
+func ValidateProwlarrConfigFile(path string) (string, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return "", false
+	}
+	// Detect null-byte padding from system crashes or uncommitted filesystem flushes
+	if bytes.ContainsRune(trimmed, 0) {
+		return "", false
+	}
+	var cfg ProwlarrConfigXML
+	if err := xml.Unmarshal(trimmed, &cfg); err != nil {
+		return "", false
+	}
+	apiKey := strings.TrimSpace(cfg.ApiKey)
+	if apiKey == "" || cfg.XMLName.Local != "Config" {
+		return "", false
+	}
+	return apiKey, true
+}
+
+// KillHungProwlarrProcesses terminates any orphaned or dialog-locked Prowlarr processes
+// when Prowlarr is not responding on its ping endpoint.
+func KillHungProwlarrProcesses() {
+	// If Prowlarr is already responding healthy, do not kill it
+	client := &http.Client{Timeout: 1 * time.Second}
+	if resp, err := client.Get("http://localhost:9696/ping"); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return
+		}
+	}
+
+	if runtime.GOOS == "windows" {
+		cmd1 := exec.Command("taskkill", "/F", "/IM", "Prowlarr.exe", "/T")
+		HideConsoleWindow(cmd1)
+		cmd1.Stdout = io.Discard
+		cmd1.Stderr = io.Discard
+		_ = cmd1.Run()
+
+		cmd2 := exec.Command("taskkill", "/F", "/IM", "Prowlarr.Console.exe", "/T")
+		HideConsoleWindow(cmd2)
+		cmd2.Stdout = io.Discard
+		cmd2.Stderr = io.Discard
+		_ = cmd2.Run()
+	} else {
+		cmd := exec.Command("pkill", "-9", "-f", "prowlarr")
+		cmd.Stdout = io.Discard
+		cmd.Stderr = io.Discard
+		_ = cmd.Run()
+	}
+	time.Sleep(200 * time.Millisecond)
+}
+
+func disableBrowserInExistingConfig() {
+	paths := GetProwlarrConfigPaths()
+
+	reBrowser := regexp.MustCompile(`(?i)<LaunchBrowser>\s*(True|true|1)\s*</LaunchBrowser>`)
+	reAuthReq := regexp.MustCompile(`(?i)<AuthenticationRequired>\s*(Enabled|enabled)\s*</AuthenticationRequired>`)
+	reAuthMeth := regexp.MustCompile(`(?i)<AuthenticationMethod>\s*(Basic|Forms|External|basic|forms|external)\s*</AuthenticationMethod>`)
 
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
-		if err == nil {
-			content := string(data)
-			changed := false
-			if strings.Contains(content, "<LaunchBrowser>True</LaunchBrowser>") {
-				content = strings.ReplaceAll(content, "<LaunchBrowser>True</LaunchBrowser>", "<LaunchBrowser>False</LaunchBrowser>")
-				changed = true
-			}
-			if strings.Contains(content, "<AuthenticationRequired>Enabled</AuthenticationRequired>") {
-				content = strings.ReplaceAll(content, "<AuthenticationRequired>Enabled</AuthenticationRequired>", "<AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>")
-				changed = true
-			}
-			if changed {
-				_ = os.WriteFile(p, []byte(content), 0644)
-			}
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		changed := false
+
+		if reBrowser.MatchString(content) {
+			content = reBrowser.ReplaceAllString(content, "<LaunchBrowser>False</LaunchBrowser>")
+			changed = true
+		}
+		if reAuthReq.MatchString(content) {
+			content = reAuthReq.ReplaceAllString(content, "<AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>")
+			changed = true
+		}
+		if reAuthMeth.MatchString(content) {
+			content = reAuthMeth.ReplaceAllString(content, "<AuthenticationMethod>None</AuthenticationMethod>")
+			changed = true
+		}
+
+		if changed {
+			_ = os.Chmod(p, 0666)
+			_ = os.WriteFile(p, []byte(content), 0644)
 		}
 	}
 }
 
+// GenerateProwlarrConfigXML creates a clean, well-formed config.xml content
+func GenerateProwlarrConfigXML(apiKey string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<Config>
+  <BindAddress>*</BindAddress>
+  <Port>9696</Port>
+  <SslPort>6969</SslPort>
+  <EnableSsl>False</EnableSsl>
+  <LaunchBrowser>False</LaunchBrowser>
+  <ApiKey>%s</ApiKey>
+  <AuthenticationMethod>None</AuthenticationMethod>
+  <AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>
+  <Branch>master</Branch>
+  <LogLevel>info</LogLevel>
+  <UrlBase></UrlBase>
+  <InstanceName>Prowlarr</InstanceName>
+</Config>
+`, apiKey)
+}
+
 // PreseedProwlarrConfig ensures config.xml exists with AuthenticationMethod=None
 // and a valid ApiKey, completely skipping the first-run browser credential wizard.
+// Crucially, it detects and wipes any corrupted config files so Prowlarr doesn't crash on startup.
 func PreseedProwlarrConfig() (string, error) {
-	// 1. Check if an existing config already has an API key
-	if config.AutoDetectAPIKey() && config.ProwlarrAPIKey != "" {
-		disableBrowserInExistingConfig()
-		return config.ProwlarrAPIKey, nil
+	configPaths := GetProwlarrConfigPaths()
+
+	var existingApiKey string
+
+	// 1. Check existing config files: delete any corrupted ones, extract API key from valid ones
+	for _, p := range configPaths {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			if key, valid := ValidateProwlarrConfigFile(p); valid {
+				if existingApiKey == "" {
+					existingApiKey = key
+				}
+			} else {
+				// Corrupted / 0-byte / invalid XML file: remove it to prevent ProwlarrStartupException
+				_ = os.Chmod(p, 0666)
+				_ = os.Remove(p)
+			}
+		}
 	}
 
-	// 2. Generate a random 32-character hex API key
-	keyBytes := make([]byte, 16)
-	if _, err := rand.Read(keyBytes); err != nil {
-		return "", fmt.Errorf("failed to generate random API key: %w", err)
+	apiKey := existingApiKey
+	if apiKey == "" {
+		// Generate a random 32-character hex API key
+		keyBytes := make([]byte, 16)
+		if _, err := rand.Read(keyBytes); err != nil {
+			return "", fmt.Errorf("failed to generate random API key: %w", err)
+		}
+		apiKey = hex.EncodeToString(keyBytes)
 	}
-	apiKey := hex.EncodeToString(keyBytes)
 
-	// 3. Choose directories to seed based on OS
+	xmlContent := GenerateProwlarrConfigXML(apiKey)
+
+	// Choose directories to seed based on OS
 	home, _ := os.UserHomeDir()
 	var targetDirs []string
 	if runtime.GOOS == "windows" {
-		targetDirs = append(targetDirs,
-			`C:\ProgramData\Prowlarr`,
-			filepath.Join(os.Getenv("LOCALAPPDATA"), "Prowlarr"),
-		)
+		progData := os.Getenv("ProgramData")
+		if progData == "" {
+			progData = `C:\ProgramData`
+		}
+		targetDirs = append(targetDirs, filepath.Join(progData, "Prowlarr"))
+		if localApp := os.Getenv("LOCALAPPDATA"); localApp != "" {
+			targetDirs = append(targetDirs, filepath.Join(localApp, "Prowlarr"))
+		}
 	} else if runtime.GOOS == "darwin" {
 		if home != "" {
 			targetDirs = append(targetDirs,
@@ -307,50 +464,36 @@ func PreseedProwlarrConfig() (string, error) {
 				filepath.Join(home, "Library", "Application Support", "Prowlarr"),
 			)
 		}
-	} else {
+	} else { // linux
 		if home != "" {
 			targetDirs = append(targetDirs, filepath.Join(home, ".config", "Prowlarr"))
 		}
 		targetDirs = append(targetDirs, "/var/lib/prowlarr")
 	}
 
-	var seededPath string
 	for _, dir := range targetDirs {
 		_ = os.MkdirAll(dir, 0755)
 		xmlPath := filepath.Join(dir, "config.xml")
-		if _, err := os.Stat(xmlPath); os.IsNotExist(err) {
-			content := fmt.Sprintf(`<Config>
-  <Port>9696</Port>
-  <UrlBase></UrlBase>
-  <BindAddress>*</BindAddress>
-  <SslPort>6969</SslPort>
-  <EnableSsl>False</EnableSsl>
-  <ApiKey>%s</ApiKey>
-  <AuthenticationMethod>None</AuthenticationMethod>
-  <AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>
-  <LaunchBrowser>False</LaunchBrowser>
-  <Branch>master</Branch>
-  <LogLevel>info</LogLevel>
-</Config>`, apiKey)
-			if err := os.WriteFile(xmlPath, []byte(content), 0644); err == nil {
-				seededPath = xmlPath
-				break
-			}
+
+		// If missing or invalid, write fresh config
+		if _, valid := ValidateProwlarrConfigFile(xmlPath); !valid {
+			_ = os.Chmod(xmlPath, 0666)
+			_ = os.Remove(xmlPath)
+			_ = os.WriteFile(xmlPath, []byte(xmlContent), 0644)
 		}
 	}
 
-	if seededPath == "" {
-		// If both existed or couldn't write, check detected key again
-		if config.AutoDetectAPIKey() && config.ProwlarrAPIKey != "" {
-			disableBrowserInExistingConfig()
-			return config.ProwlarrAPIKey, nil
-		}
-	}
+	// Update existing configs to ensure headless / disabled auth
+	disableBrowserInExistingConfig()
+
+	config.ProwlarrAPIKey = apiKey
+	_ = config.SaveConfig(apiKey)
 
 	return apiKey, nil
 }
 
-// StartProwlarr launches Prowlarr in the background without opening a browser and waits for port 9696
+// StartProwlarr launches Prowlarr in the background without opening a browser and waits for port 9696.
+// It auto-heals corrupted configs, kills hung/zombie instances, and retries if Prowlarr fails to start.
 func StartProwlarr() error {
 	// Check if already responsive
 	resp, err := http.Get("http://localhost:9696/ping")
@@ -361,36 +504,81 @@ func StartProwlarr() error {
 		}
 	}
 
+	// Kill any hung/zombie Prowlarr process (including modal error dialogs)
+	KillHungProwlarrProcesses()
+
+	// Guarantee config.xml is pre-seeded, valid, and uncorrupted
+	_, _ = PreseedProwlarrConfig()
+
 	exe := FindProwlarrExecutable()
 	if exe == "" {
 		return fmt.Errorf("Prowlarr executable not found")
 	}
 
-	flag := "-nobrowser"
-	if runtime.GOOS == "windows" {
-		flag = "/nobrowser"
-	}
-	cmd := exec.Command(exe, flag)
-	HideConsoleWindow(cmd)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start Prowlarr: %w", err)
-	}
+	startAttempt := func() error {
+		flag := "-nobrowser"
+		if runtime.GOOS == "windows" {
+			flag = "/nobrowser"
+		}
+		cmd := exec.Command(exe, flag)
+		HideConsoleWindow(cmd)
+		var errBuf bytes.Buffer
+		cmd.Stdout = io.Discard
+		cmd.Stderr = &errBuf
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("failed to start Prowlarr: %w", err)
+		}
 
-	// Poll until localhost:9696 is ready (up to 60 seconds)
-	for i := 0; i < 120; i++ {
-		time.Sleep(500 * time.Millisecond)
-		resp, err := http.Get("http://localhost:9696/ping")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
+		done := make(chan error, 1)
+		go func() {
+			done <- cmd.Wait()
+		}()
+
+		// Poll until localhost:9696 is ready (up to 35 seconds)
+		for i := 0; i < 70; i++ {
+			time.Sleep(500 * time.Millisecond)
+
+			// Check if process crashed prematurely
+			select {
+			case exitErr := <-done:
+				stderrMsg := strings.TrimSpace(errBuf.String())
+				if stderrMsg != "" {
+					return fmt.Errorf("Prowlarr process exited prematurely (%v): %s", exitErr, stderrMsg)
+				}
+				return fmt.Errorf("Prowlarr process exited prematurely (%v)", exitErr)
+			default:
+			}
+
+			resp, err := http.Get("http://localhost:9696/ping")
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					return nil
+				}
 			}
 		}
+
+		return fmt.Errorf("timed out waiting for Prowlarr to initialize")
 	}
 
-	return fmt.Errorf("timed out waiting for Prowlarr to initialize")
+	err = startAttempt()
+	if err != nil {
+		// Auto-heal on startup failure:
+		// Kill any stuck/crashed instance, purge all config files, re-seed, and retry once
+		KillHungProwlarrProcesses()
+		for _, p := range GetProwlarrConfigPaths() {
+			_ = os.Chmod(p, 0666)
+			_ = os.Remove(p)
+		}
+		_, _ = PreseedProwlarrConfig()
+
+		if retryErr := startAttempt(); retryErr == nil {
+			return nil
+		}
+		return err
+	}
+
+	return nil
 }
 
 // ConfigureTopIndexers adds recommended public indexers (YTS, The Pirate Bay, LimeTorrents, EZTV, TorrentGalaxy) via Prowlarr REST API,
@@ -574,6 +762,9 @@ func (l *rodProgressLogger) Println(vs ...interface{}) {
 
 // AutoInstallDependencies checks for and installs MPV, Prowlarr, and FlareSolverr, pre-seeding config and adding top indexers
 func AutoInstallDependencies(onProgress func(step string)) error {
+	// 0. Terminate any hung or modal-dialog locked Prowlarr processes from previous runs
+	KillHungProwlarrProcesses()
+
 	// 1. Install MPV if missing
 	if FindMPVExecutable() == "" {
 		switch runtime.GOOS {
@@ -611,8 +802,8 @@ func AutoInstallDependencies(onProgress func(step string)) error {
 		}
 	}
 
-	// 2. Pre-seed Prowlarr config to bypass credential setup
-	onProgress("Pre-seeding Prowlarr security config (skipping login setup)...")
+	// 2. Pre-seed Prowlarr config and repair any corrupt config.xml to bypass credential setup
+	onProgress("Verifying and pre-seeding Prowlarr security config...")
 	apiKey, _ := PreseedProwlarrConfig()
 
 	// 3. Install Prowlarr if not installed
@@ -625,12 +816,21 @@ func AutoInstallDependencies(onProgress func(step string)) error {
 			cmd.Stdout = io.Discard
 			cmd.Stderr = io.Discard
 			_ = cmd.Run()
+			// After winget install, guarantee config.xml exists and is clean in newly created directory
+			time.Sleep(1 * time.Second)
+			if key, err := PreseedProwlarrConfig(); err == nil && key != "" {
+				apiKey = key
+			}
 		case "darwin":
 			onProgress("Installing Prowlarr via Homebrew Cask...")
 			cmd := exec.Command("brew", "install", "--cask", "prowlarr")
 			cmd.Stdout = io.Discard
 			cmd.Stderr = io.Discard
 			_ = cmd.Run()
+			time.Sleep(1 * time.Second)
+			if key, err := PreseedProwlarrConfig(); err == nil && key != "" {
+				apiKey = key
+			}
 		default: // linux
 			onProgress("On Linux, install Prowlarr via package manager or Docker...")
 		}
