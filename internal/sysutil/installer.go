@@ -96,9 +96,17 @@ func disableBrowserInExistingConfig() {
 		data, err := os.ReadFile(p)
 		if err == nil {
 			content := string(data)
+			changed := false
 			if strings.Contains(content, "<LaunchBrowser>True</LaunchBrowser>") {
-				newContent := strings.ReplaceAll(content, "<LaunchBrowser>True</LaunchBrowser>", "<LaunchBrowser>False</LaunchBrowser>")
-				_ = os.WriteFile(p, []byte(newContent), 0644)
+				content = strings.ReplaceAll(content, "<LaunchBrowser>True</LaunchBrowser>", "<LaunchBrowser>False</LaunchBrowser>")
+				changed = true
+			}
+			if strings.Contains(content, "<AuthenticationRequired>Enabled</AuthenticationRequired>") {
+				content = strings.ReplaceAll(content, "<AuthenticationRequired>Enabled</AuthenticationRequired>", "<AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>")
+				changed = true
+			}
+			if changed {
+				_ = os.WriteFile(p, []byte(content), 0644)
 			}
 		}
 	}
@@ -155,6 +163,7 @@ func PreseedProwlarrConfig() (string, error) {
   <EnableSsl>False</EnableSsl>
   <ApiKey>%s</ApiKey>
   <AuthenticationMethod>None</AuthenticationMethod>
+  <AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>
   <LaunchBrowser>False</LaunchBrowser>
   <Branch>master</Branch>
   <LogLevel>info</LogLevel>
