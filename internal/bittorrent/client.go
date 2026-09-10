@@ -2,13 +2,23 @@ package bittorrent
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"sync"
 
 	"bubble-stream/internal/config"
 	"bubble-stream/internal/sysutil"
+	g "github.com/anacrolix/generics"
+	analog "github.com/anacrolix/log"
 	"github.com/anacrolix/torrent"
+	"github.com/anacrolix/torrent/storage"
 )
+
+func init() {
+	analog.DefaultHandler = analog.DiscardHandler
+	analog.Default.SetHandlers(analog.DiscardHandler)
+}
 
 // Supplemental high-speed public trackers to maximize peer discovery
 var supplementalTrackers = []string{
@@ -29,9 +39,10 @@ func AllTrackers() []string {
 
 // Engine wraps the anacrolix/torrent client with clean lifecycle management.
 type Engine struct {
-	client  *torrent.Client
-	dataDir string
-	mu      sync.Mutex
+	client       *torrent.Client
+	defaultStore storage.ClientImplCloser
+	dataDir      string
+	mu           sync.Mutex
 }
 
 // NewEngine initializes a new high-throughput torrent engine with DHT, PEX, and multi-tracker support.
@@ -42,9 +53,25 @@ func NewEngine() (*Engine, error) {
 	}
 	sysutil.RegisterTempDir(tempDir)
 
+	analog.DefaultHandler = analog.DiscardHandler
+	analog.Default.SetHandlers(analog.DiscardHandler)
+
 	cfg := torrent.NewDefaultClientConfig()
 	cfg.DataDir = tempDir
 	cfg.ListenPort = 0 // Ephemeral port to prevent port conflicts and ensure clean close
+
+	discardLogger := analog.NewLogger()
+	discardLogger.SetHandlers(analog.DiscardHandler)
+	cfg.Logger = discardLogger
+	cfg.Slogger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	fileStore := storage.NewFileOpts(storage.NewFileClientOpts{
+		ClientBaseDir:   tempDir,
+		UsePartFiles:    g.Some(false),
+		PieceCompletion: storage.NewMapPieceCompletion(),
+	})
+	cfg.DefaultStorage = fileStore
+
 	cfg.NoUpload = false
 	cfg.DisableAggressiveUpload = true
 	cfg.Seed = false
@@ -66,13 +93,15 @@ func NewEngine() (*Engine, error) {
 
 	cl, err := torrent.NewClient(cfg)
 	if err != nil {
+		_ = fileStore.Close()
 		sysutil.RemoveTempDir(tempDir)
 		return nil, fmt.Errorf("failed to initialize torrent client: %w", err)
 	}
 
 	return &Engine{
-		client:  cl,
-		dataDir: tempDir,
+		client:       cl,
+		defaultStore: fileStore,
+		dataDir:      tempDir,
 	}, nil
 }
 
@@ -97,6 +126,10 @@ func (e *Engine) Close() {
 	if e.client != nil {
 		e.client.Close()
 		e.client = nil
+	}
+	if e.defaultStore != nil {
+		_ = e.defaultStore.Close()
+		e.defaultStore = nil
 	}
 	if e.dataDir != "" {
 		sysutil.RemoveTempDir(e.dataDir)

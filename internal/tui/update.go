@@ -53,7 +53,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = StateList
 			}
 		}
-		return m, nil
+		return m, tea.ClearScreen
 
 	case SystemHealthMsg:
 		m.health = msg.Health
@@ -431,8 +431,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				m.state = StateLoadingTorrent
-					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
-				return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(resolvedMagnet, "", "", ""))
+				m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+				return m, tea.Batch(tea.ClearScreen, m.loadingSpinner.Tick, player.LaunchPlayer(resolvedMagnet, "", "", ""))
 
 			case StateTVFileSelect:
 				if len(m.tvFiles) > 0 {
@@ -441,8 +441,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(fields) > 0 {
 						targetIndex := fields[0]
 						m.state = StateLoadingTorrent
-					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
-						return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(m.selectedMagnet, targetIndex, "", ""))
+						m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+						return m, tea.Batch(tea.ClearScreen, m.loadingSpinner.Tick, player.LaunchPlayer(m.selectedMagnet, targetIndex, "", ""))
 					}
 				}
 			}
@@ -578,8 +578,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case player.AnikotoStreamMsg:
 		proxyURL := player.GlobalProxy.Register(msg.M3u8URL, msg.Referer)
 		m.state = StateLoadingTorrent
-					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
-		return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(proxyURL, "", msg.Referer, msg.SubtitleURL))
+		m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+		return m, tea.Batch(tea.ClearScreen, m.loadingSpinner.Tick, player.LaunchPlayer(proxyURL, "", msg.Referer, msg.SubtitleURL))
 
 	case player.AsianShowsMsg:
 		m.asianShows = msg
@@ -604,7 +604,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case player.AsianStreamMsg:
 		m.state = StateLoadingTorrent
 		m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
-		return m, tea.Batch(m.loadingSpinner.Tick, player.LaunchPlayer(msg.StreamURL, "", msg.Referer, msg.SubtitleURL))
+		return m, tea.Batch(tea.ClearScreen, m.loadingSpinner.Tick, player.LaunchPlayer(msg.StreamURL, "", msg.Referer, msg.SubtitleURL))
 
 	case prowlarr.TvShowsMsg:
 		m.tvShows = msg
