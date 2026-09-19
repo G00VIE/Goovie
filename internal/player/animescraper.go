@@ -2,6 +2,11 @@ package player
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,11 +49,99 @@ type GetSourcesResponse struct {
 	Sources struct {
 		File string `json:"file"`
 	} `json:"sources"`
+	Enc    string `json:"enc"`
 	Tracks []struct {
 		File  string `json:"file"`
 		Label string `json:"label"`
 		Kind  string `json:"kind"`
 	} `json:"tracks"`
+}
+
+const (
+	sourceEncKey   = "i?LMTAx0Q6,:}50U"
+	sourceEncIV    = "W0;27ToaUpl_P%'c"
+	cdnTokenSecret = "MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s"
+)
+
+func padKey(key string, length int) []byte {
+	k := []byte(key)
+	res := make([]byte, length)
+	copy(res, k)
+	return res
+}
+
+func b64UrlDecode(s string) ([]byte, error) {
+	s = strings.ReplaceAll(s, "-", "+")
+	s = strings.ReplaceAll(s, "_", "/")
+	if rem := len(s) % 4; rem != 0 {
+		s += strings.Repeat("=", 4-rem)
+	}
+	return base64.StdEncoding.DecodeString(s)
+}
+
+func b64UrlEncode(data []byte) string {
+	s := base64.StdEncoding.EncodeToString(data)
+	s = strings.ReplaceAll(s, "+", "-")
+	s = strings.ReplaceAll(s, "/", "_")
+	return strings.TrimRight(s, "=")
+}
+
+func decryptSourcesEnc(enc string) (string, error) {
+	ciphertext, err := b64UrlDecode(enc)
+	if err != nil {
+		return "", fmt.Errorf("b64 decode failed: %v", err)
+	}
+
+	key := padKey(sourceEncKey, 32)
+	iv := padKey(sourceEncIV, 16)
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+
+	if len(ciphertext)%aes.BlockSize != 0 {
+		return "", fmt.Errorf("ciphertext length %d not a multiple of %d", len(ciphertext), aes.BlockSize)
+	}
+
+	mode := cipher.NewCBCDecrypter(block, iv)
+	plaintext := make([]byte, len(ciphertext))
+	mode.CryptBlocks(plaintext, ciphertext)
+
+	if len(plaintext) == 0 {
+		return "", fmt.Errorf("empty plaintext")
+	}
+	padLen := int(plaintext[len(plaintext)-1])
+	if padLen > 0 && padLen <= aes.BlockSize && padLen <= len(plaintext) {
+		plaintext = plaintext[:len(plaintext)-padLen]
+	}
+
+	return string(plaintext), nil
+}
+
+func attachCdnToken(streamURL string) string {
+	if strings.Contains(streamURL, "token=") {
+		return streamURL
+	}
+	re := regexp.MustCompile(`/([a-f0-9]{32})/([a-f0-9]{32})/`)
+	matches := re.FindStringSubmatch(streamURL)
+	if len(matches) < 3 {
+		return streamURL
+	}
+	pathKey := strings.ToLower(matches[1]) + "/" + strings.ToLower(matches[2])
+	expires := time.Now().Unix() + 90
+	payload := fmt.Sprintf("%d|%s", expires, pathKey)
+
+	mac := hmac.New(sha256.New, []byte(cdnTokenSecret))
+	mac.Write([]byte(payload))
+	sig := mac.Sum(nil)
+
+	token := b64UrlEncode([]byte(payload)) + "." + b64UrlEncode(sig)
+	sep := "?"
+	if strings.Contains(streamURL, "?") {
+		sep = "&"
+	}
+	return streamURL + sep + "token=" + url.QueryEscape(token)
 }
 
 type AnikotoShowsMsg []ShowResult
@@ -203,9 +296,24 @@ func resolveStream(linkID string, watchURL string, mode string) (AnikotoStreamMs
 	var finalRes GetSourcesResponse
 	json.Unmarshal(finalSourcesBytes, &finalRes)
 
-	if finalRes.Sources.File == "" {
+	fileURL := finalRes.Sources.File
+	if fileURL == "" && finalRes.Enc != "" {
+		decrypted, err := decryptSourcesEnc(finalRes.Enc)
+		if err == nil {
+			var decSources struct {
+				File string `json:"file"`
+			}
+			if json.Unmarshal([]byte(decrypted), &decSources) == nil {
+				fileURL = decSources.File
+			}
+		}
+	}
+
+	if fileURL == "" {
 		return AnikotoStreamMsg{}, fmt.Errorf("no streaming link resolved from provider")
 	}
+
+	fileURL = attachCdnToken(fileURL)
 
 	var subtitleURL string
 	var fallbackSubtitle string
@@ -227,12 +335,12 @@ func resolveStream(linkID string, watchURL string, mode string) (AnikotoStreamMs
 	referrerBase := parsedEmbedURL.Scheme + "://" + parsedEmbedURL.Host + "/"
 
 	// Verify that the master playlist is accessible
-	masterBytes, err := fetchHTTPWithReferer(client, finalRes.Sources.File, referrerBase)
+	masterBytes, err := fetchHTTPWithReferer(client, fileURL, referrerBase)
 	if err != nil || len(masterBytes) == 0 {
 		return AnikotoStreamMsg{}, fmt.Errorf("provider stream master playlist unreachable: %v", err)
 	}
 
-	return AnikotoStreamMsg{M3u8URL: finalRes.Sources.File, Referer: referrerBase, SubtitleURL: subtitleURL}, nil
+	return AnikotoStreamMsg{M3u8URL: fileURL, Referer: referrerBase, SubtitleURL: subtitleURL}, nil
 }
 
 func RaceAnikotoStreamsCmd(epToken string, mode string, watchURL string) tea.Cmd {
@@ -259,7 +367,8 @@ func RaceAnikotoStreamsCmd(epToken string, mode string, watchURL string) tea.Cmd
 			blockHTML = blockHTML[:endIdx]
 		}
 
-		serverRE := regexp.MustCompile(`<li[^>]*?data-link-id="([^"]+)"[^>]*>([^<]+)</li>`)
+		serverRE := regexp.MustCompile(`<li[^>]*?data-link-id="([^"]+)"[^>]*>([\s\S]*?)</li>`)
+		tagRE := regexp.MustCompile(`<[^>]*>`)
 		serverMatches := serverRE.FindAllStringSubmatch(blockHTML, -1)
 		if len(serverMatches) == 0 {
 			return prowlarr.ErrMsg{Err: fmt.Errorf("no servers found for %s mode", mode)}
@@ -268,7 +377,7 @@ func RaceAnikotoStreamsCmd(epToken string, mode string, watchURL string) tea.Cmd
 		var highPriority []string
 		var fallback []string
 		for _, m := range serverMatches {
-			name := strings.ToLower(m[2])
+			name := strings.ToLower(tagRE.ReplaceAllString(m[2], ""))
 			if strings.Contains(name, "vidstream") || strings.Contains(name, "hd") || strings.Contains(name, "mega") {
 				highPriority = append(highPriority, m[1])
 			} else {

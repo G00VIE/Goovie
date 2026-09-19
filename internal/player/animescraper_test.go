@@ -142,3 +142,50 @@ func TestFetchHTTP_MissingScheme(t *testing.T) {
 		t.Error("expected error for missing scheme")
 	}
 }
+
+func TestDecryptSourcesEnc_Success(t *testing.T) {
+	// Sample encrypted string generated with the standard key and IV
+	enc := "wdeBruh3qqn_i5wUNnyaPcXqidp1UWP84FfPHzGyKXD33V0jwSoOHPTijvJ6ZqQumcZd_ZfU0icvRA_1o2Ty7gVUSYvlMmrk09FoaXRXJ57blHmT9cZHuQ8Qxv_T2U7GTEmtdIIIVZVgy5sNeRSSkqY1VPqlBtMjz6xf0LrNy-g"
+	dec, err := decryptSourcesEnc(enc)
+	if err != nil {
+		t.Fatalf("decryptSourcesEnc failed: %v", err)
+	}
+	var res struct {
+		File string `json:"file"`
+	}
+	if err := json.Unmarshal([]byte(dec), &res); err != nil {
+		t.Fatalf("unmarshal decrypted text failed: %v", err)
+	}
+	if res.File == "" {
+		t.Error("expected non-empty file in decrypted payload")
+	}
+}
+
+func TestAttachCdnToken(t *testing.T) {
+	input := "https://fetch.example.com/anime/44119006254708ef096f25a96700dfb1/98345dd250f1043a41f4ee111c071011/master.m3u8"
+	signed := attachCdnToken(input)
+	if signed == input {
+		t.Error("attachCdnToken should have appended token")
+	}
+	if !contains(signed, "token=") {
+		t.Error("expected token query parameter in signed URL")
+	}
+
+	// Should not re-sign if token already exists
+	alreadySigned := attachCdnToken(signed)
+	if alreadySigned != signed {
+		t.Error("should not re-sign already signed URL")
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || (len(s) > 0 && len(substr) > 0 && (func() bool {
+		for i := 0; i+len(substr) <= len(s); i++ {
+			if s[i:i+len(substr)] == substr {
+				return true
+			}
+		}
+		return false
+	})()))
+}
+
