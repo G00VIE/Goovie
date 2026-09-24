@@ -19,3 +19,12 @@ goovie.go
 /goovie.png
 /prowlar.png
 /torrent_debug.txt
+
+# Brag video generation & media
+/brag-output/
+*.mp4
+*.webm
+
+# Temp reverse engineering / scratch
+/temp_cineby/
+temp_cineby.zip

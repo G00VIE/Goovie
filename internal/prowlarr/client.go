@@ -224,8 +224,14 @@ func MatchesQuality(title string, quality string) bool {
 func SearchSingleIndexer(query string, indexerID int, quality string, isTVShow bool, isAnime bool) tea.Cmd {
 	return func() tea.Msg {
 		safeQuery := url.QueryEscape(query)
-		apiUrl := fmt.Sprintf("%s/api/v1/search?query=%s&type=search&indexerIds=%d&apikey=%s",
-			config.ProwlarrURL, safeQuery, indexerID, config.ProwlarrAPIKey)
+		catParam := "&categories=2000"
+		if isTVShow && !isAnime {
+			catParam = "&categories=5000"
+		} else if isAnime {
+			catParam = "&categories=5070,5000"
+		}
+		apiUrl := fmt.Sprintf("%s/api/v1/search?query=%s&type=search&indexerIds=%d%s&apikey=%s",
+			config.ProwlarrURL, safeQuery, indexerID, catParam, config.ProwlarrAPIKey)
 
 		targetTag := ""
 		words := strings.Fields(strings.ToLower(query))

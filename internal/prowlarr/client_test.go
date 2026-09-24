@@ -239,6 +239,41 @@ func TestSearchSingleIndexer_QualityFilter(t *testing.T) {
 	}
 }
 
+func TestSearchSingleIndexer_Categories(t *testing.T) {
+	var requestedURL string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedURL = r.URL.String()
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`[]`))
+	}))
+	defer ts.Close()
+
+	origURL := config.ProwlarrURL
+	config.ProwlarrURL = ts.URL
+	defer func() { config.ProwlarrURL = origURL }()
+
+	// Test TV show category 5000
+	cmd := SearchSingleIndexer("Friends S06", 2, "All", true, false)
+	cmd()
+	if !strings.Contains(requestedURL, "categories=5000") {
+		t.Errorf("expected categories=5000 for TV show, got URL: %s", requestedURL)
+	}
+
+	// Test Movie category 2000
+	cmd = SearchSingleIndexer("Inception", 2, "All", false, false)
+	cmd()
+	if !strings.Contains(requestedURL, "categories=2000") {
+		t.Errorf("expected categories=2000 for Movie, got URL: %s", requestedURL)
+	}
+
+	// Test Anime categories 5070,5000
+	cmd = SearchSingleIndexer("Naruto", 2, "All", false, true)
+	cmd()
+	if !strings.Contains(requestedURL, "categories=5070%2C5000") && !strings.Contains(requestedURL, "categories=5070,5000") {
+		t.Errorf("expected anime categories, got URL: %s", requestedURL)
+	}
+}
+
 // --- TV and Retry Fetch Tests ---
 
 func TestFetchWithRetry_Success(t *testing.T) {
