@@ -10,6 +10,7 @@ import (
 
 	"bubble-stream/internal/assets"
 	"bubble-stream/internal/bittorrent"
+	"bubble-stream/internal/config"
 	"bubble-stream/internal/player"
 	"bubble-stream/internal/sysutil"
 	"bubble-stream/internal/tui"
@@ -27,6 +28,7 @@ func main() {
 		bittorrent.CloseGlobalEngine()
 		player.CloseProxy()
 		sysutil.StopFlareSolverr()
+		_ = config.PruneTorrentCache(10, "")
 		sysutil.PurgeAllTempData()
 	}()
 
@@ -37,6 +39,7 @@ func main() {
 		bittorrent.CloseGlobalEngine()
 		player.CloseProxy()
 		sysutil.StopFlareSolverr()
+		_ = config.PruneTorrentCache(10, "")
 		sysutil.PurgeAllTempData()
 		os.Exit(0)
 	}()

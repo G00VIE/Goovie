@@ -432,6 +432,61 @@ func renderSystemHealthCheck(m Model) string {
 		keyStyle.Render("[ q ]"), dimStyle.Render("Quit"),
 	)
 
+	activeCache := config.GetDownloadCacheMB()
+	cacheOptionsView := fmt.Sprintf("  %s %s: ",
+		keyStyle.Render("[ c ]"), actionStyle.Render("Download Cache Buffer"))
+	for _, mb := range config.DownloadCacheOptions {
+		label := fmt.Sprintf("%d MB", mb)
+		if mb >= 1024 {
+			label = "1 GB (Full Ep)"
+		} else if mb == 512 {
+			label = "512 MB (~32m)"
+		} else if mb == 256 {
+			label = "256 MB (~16m)"
+		} else if mb == 150 {
+			label = "150 MB (~9m)"
+		}
+		if mb == activeCache {
+			cacheOptionsView += lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render(fmt.Sprintf("[✓ %s] ", label))
+		} else {
+			cacheOptionsView += dimStyle.Render(fmt.Sprintf("[ %s ] ", label))
+		}
+	}
+
+	skipMode := config.SkipIntroMode
+	if skipMode == "" {
+		skipMode = "prompt"
+	}
+	skipOptionsView := fmt.Sprintf("  %s %s: ",
+		keyStyle.Render("[ k ]"), actionStyle.Render("Skip Intro/Outro     "))
+	for _, mode := range config.SkipIntroOptions {
+		label := mode
+		if mode == "prompt" {
+			label = "Netflix Prompt"
+		} else if mode == "auto" {
+			label = "Auto-Skip"
+		} else if mode == "off" {
+			label = "Off"
+		}
+		if mode == skipMode {
+			skipOptionsView += lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render(fmt.Sprintf("[✓ %s] ", label))
+		} else {
+			skipOptionsView += dimStyle.Render(fmt.Sprintf("[ %s ] ", label))
+		}
+	}
+
+	resumeView := fmt.Sprintf("  %s %s: ",
+		keyStyle.Render("[ r ]"), actionStyle.Render("Auto-Resume Playback "))
+	if config.AutoResume {
+		resumeView += lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render("[✓ Enabled] ") + dimStyle.Render("[ Disabled ]")
+	} else {
+		resumeView += dimStyle.Render("[ Enabled ] ") + lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("[✓ Disabled]")
+	}
+
+	cacheSize, _ := config.GetTorrentCacheSize()
+	clearCacheView := fmt.Sprintf("  %s %s: %s",
+		keyStyle.Render("[ x ]"), actionStyle.Render("Clear Torrent Cache  "), dimStyle.Render(fmt.Sprintf("%s cached on disk", config.FormatBytes(cacheSize))))
+
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		titleStyle.Render("  ═══════════════════ GOOVIE SYSTEM SETUP & HEALTH ═══════════════════"),
 		"",
@@ -450,6 +505,13 @@ func renderSystemHealthCheck(m Model) string {
 		"  ────────────────────────────────────────────────────────────────────",
 		"",
 		actions,
+		"",
+		"  ────────────────────────────────────────────────────────────────────",
+		dimStyle.Render("  STREAM & CACHE SETTINGS (Press key to toggle):"),
+		cacheOptionsView,
+		skipOptionsView,
+		resumeView,
+		clearCacheView,
 		"",
 	)
 
@@ -611,6 +673,40 @@ func (m Model) View() string {
 		items := []string{
 			m.cachedFrontTitle,
 			"\n\n",
+		}
+
+		if resumeState, err := config.LoadResumeState(); err == nil && resumeState != nil && resumeState.Title != "" && resumeState.Target != "" {
+			resumeTitle := resumeState.Title
+			if resumeState.Season > 0 && resumeState.Episode > 0 {
+				resumeTitle = fmt.Sprintf("%s S%02dE%02d", resumeState.Title, resumeState.Season, resumeState.Episode)
+			} else if resumeState.EpisodeTitle != "" {
+				resumeTitle = fmt.Sprintf("%s (%s)", resumeState.Title, resumeState.EpisodeTitle)
+			}
+			timeStr := ""
+			if resumeState.TimePos > 0 {
+				curM := int(resumeState.TimePos) / 60
+				curS := int(resumeState.TimePos) % 60
+				if resumeState.Duration > 0 {
+					durM := int(resumeState.Duration) / 60
+					durS := int(resumeState.Duration) % 60
+					timeStr = fmt.Sprintf(" [%02d:%02d / %02d:%02d]", curM, curS, durM, durS)
+				} else {
+					timeStr = fmt.Sprintf(" [%02d:%02d]", curM, curS)
+				}
+			}
+			resumeBox := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("120")).
+				Padding(0, 2).
+				Align(lipgloss.Center).
+				Render(fmt.Sprintf("▶ CONTINUE WATCHING: %s%s\n%s",
+					lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true).Render(resumeTitle),
+					lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(timeStr),
+					lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render("Press [ C ] to Resume Playback")))
+			items = append(items, resumeBox, "\n\n")
+		}
+
+		items = append(items,
 			enterInst,
 			"\n",
 			setupInst,
@@ -618,7 +714,7 @@ func (m Model) View() string {
 			backInst,
 			"\n",
 			escInst,
-		}
+		)
 		if !m.health.AllReady() {
 			items = append(items, "\n\n", lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Align(lipgloss.Center).Render("⚠️  Some components need setup. Press [ S ] for 1-Click Auto-Installer."))
 		}
@@ -672,7 +768,11 @@ func (m Model) View() string {
 		}
 
 		footerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Align(lipgloss.Center)
-		footer := footerStyle.Render("[← / →] Select • [Enter] Choose • [s] Setup / Health • [q] Quit")
+		footerText := "[← / →] Select • [Enter] Choose • [s] Setup / Health • [q] Quit"
+		if resumeState, err := config.LoadResumeState(); err == nil && resumeState != nil && resumeState.Target != "" {
+			footerText = "[c] Resume • " + footerText
+		}
+		footer := footerStyle.Render(footerText)
 
 		titleBlock := m.cachedTitle
 		if termHeight < 22 {
@@ -931,6 +1031,10 @@ func (m Model) View() string {
 		for i := start; i < end; i++ {
 			ep := m.anikotoEpisodes[i]
 			title := fmt.Sprintf("%d. Episode %s", i+1, ep.Num)
+			epKey := fmt.Sprintf("anime:%s:ep%s", m.anikotoWatchURL, ep.Num)
+			if config.IsEpisodeWatched(epKey) {
+				title += " \033[32m[✓]\033[0m"
+			}
 			if i == m.cursor {
 				optsUI += fmt.Sprintf("      \033[47;30m • %s \033[0m\n", title)
 			} else {
@@ -1072,6 +1176,10 @@ func (m Model) View() string {
 		for i := start; i < end; i++ {
 			ep := m.asianEpisodes[i]
 			title := fmt.Sprintf("%d. Episode %s", i+1, ep.Title)
+			epKey := fmt.Sprintf("asian:%s:%s", m.selectedAsianShow.Title, ep.Title)
+			if config.IsEpisodeWatched(epKey) {
+				title += " \033[32m[✓]\033[0m"
+			}
 			if i == m.cursor {
 				optsUI += fmt.Sprintf("      \033[47;30m • %s \033[0m\n", title)
 			} else {
@@ -1214,14 +1322,21 @@ func (m Model) View() string {
 				fileText = strings.TrimSpace(fileText)
 			}
 
-			if len([]rune(fileText)) > 60 {
-				fileText = string([]rune(fileText)[:57]) + "..."
+			epKey := fmt.Sprintf("tv:%s:s%02d:%s", m.selectedShow, m.selectedSeason, m.tvFiles[i])
+			watchedTag := ""
+			if config.IsEpisodeWatched(epKey) {
+				watchedTag = " \033[32m[✓]\033[0m"
+			}
+
+			maxLen := 56
+			if len([]rune(fileText)) > maxLen {
+				fileText = string([]rune(fileText)[:maxLen-3]) + "..."
 			} else {
-				padAmtTitle := 60 - len([]rune(fileText))
+				padAmtTitle := maxLen - len([]rune(fileText))
 				fileText = fileText + strings.Repeat(" ", padAmtTitle)
 			}
-			
-			displayRow := fileText
+
+			displayRow := fileText + watchedTag
 
 			if isTarget {
 				s += fmt.Sprintf("\033[30;47m  \033[5m●\033[0;30;47m %s  \033[0m\n", displayRow)
@@ -1385,29 +1500,25 @@ func (m Model) View() string {
 
 				// Format extraction (Strict 8 visual columns)
 				format := "Unknown"
-				icon := "💿"
+				icon := "📀"
 				t := strings.ToLower(res.Title)
+				if strings.Contains(t, "x265") || strings.Contains(t, "hevc") || strings.Contains(t, "psa") {
+					icon = "⚡"
+				}
 				if strings.Contains(t, "bluray") || strings.Contains(t, "blu-ray") || strings.Contains(t, "bdrip") || strings.Contains(t, "brrip") {
 					format = "BluRay"
-					icon = "📀"
 				} else if strings.Contains(t, "web-dl") || strings.Contains(t, "webdl") {
 					format = "WEB-DL"
-					icon = "📀"
 				} else if strings.Contains(t, "webrip") || strings.Contains(t, "web") {
 					format = "WEBRip"
-					icon = "📀"
 				} else if strings.Contains(t, "hdrip") {
 					format = "HDRip"
-					icon = "📀"
 				} else if strings.Contains(t, "hdtv") {
 					format = "HDTV"
-					icon = "📀"
 				} else if strings.Contains(t, "dvd") {
 					format = "DVD"
-					icon = "📀"
 				} else if strings.Contains(t, "cam") || strings.Contains(t, "ts") || strings.Contains(t, "telesync") {
 					format = "CAM/TS"
-					icon = "📀"
 				}
 
 				padAmtFormat := 8 - len([]rune(format))

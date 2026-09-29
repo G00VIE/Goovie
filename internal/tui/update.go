@@ -35,19 +35,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case player.PlayerFinishedMsg:
 		sysutil.PurgeAllTempData()
+		if state, err := config.LoadResumeState(); err == nil && state != nil {
+			if state.Duration > 0 && state.TimePos >= (state.Duration-30) {
+				_ = config.ClearResumeState()
+			} else if state.TimePos > 0 {
+				_ = config.SaveResumeState(*state)
+			}
+		}
+		_ = config.PruneTorrentCache(10, "")
 		if msg.Err != nil {
 			m.err = msg.Err
 			m.state = StateModeSelect
 		} else {
 			if m.isAsian {
 				if m.isTVShow {
+					if m.cursor >= 0 && m.cursor < len(m.asianEpisodes) {
+						_ = config.MarkEpisodeWatched(fmt.Sprintf("asian:%s:%s", m.selectedAsianShow.Title, m.asianEpisodes[m.cursor].Title))
+						if m.cursor < len(m.asianEpisodes)-1 {
+							m.cursor++
+						}
+					}
 					m.state = StateAsianEpSelect
 				} else {
 					m.state = StateAsianShowSelect
 				}
 			} else if m.isAnime {
+				if m.cursor >= 0 && m.cursor < len(m.anikotoEpisodes) {
+					_ = config.MarkEpisodeWatched(fmt.Sprintf("anime:%s:ep%s", m.anikotoWatchURL, m.anikotoEpisodes[m.cursor].Num))
+					if m.cursor < len(m.anikotoEpisodes)-1 {
+						m.cursor++
+					}
+				}
 				m.state = StateAnikotoEpSelect
 			} else if m.isTVShow {
+				if m.cursor >= 0 && m.cursor < len(m.tvFiles) {
+					_ = config.MarkEpisodeWatched(fmt.Sprintf("tv:%s:s%02d:%s", m.selectedShow, m.selectedSeason, m.tvFiles[m.cursor]))
+					if m.cursor < len(m.tvFiles)-1 {
+						m.cursor++
+					}
+				}
 				m.state = StateTVFileSelect
 			} else {
 				m.state = StateList
@@ -139,6 +165,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.health = sysutil.CheckSystemHealth()
 				m.state = StateSystemHealthCheck
 				return m, tea.ClearScreen
+			}
+		case "c", "C":
+			if m.state == StateSystemHealthCheck {
+				curMB := config.GetDownloadCacheMB()
+				nextMB := 256
+				switch curMB {
+				case 150:
+					nextMB = 256
+				case 256:
+					nextMB = 512
+				case 512:
+					nextMB = 1024
+				case 1024:
+					nextMB = 150
+				default:
+					nextMB = 256
+				}
+				_ = config.SaveDownloadCacheMB(nextMB)
+				return m, nil
+			}
+			if m.state == StateFrontPage || m.state == StateModeSelect {
+				resumeState, err := config.LoadResumeState()
+				if err == nil && resumeState != nil && resumeState.Target != "" {
+					target := resumeState.Target
+					if resumeState.MediaType == "anime" && player.GlobalProxy != nil {
+						target = player.GlobalProxy.Register(resumeState.Target, resumeState.Referer)
+					}
+					m.state = StateLoadingTorrent
+					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+					return m, tea.Batch(tea.ClearScreen, m.loadingSpinner.Tick, player.LaunchPlayerWithResume(target, resumeState.FileIndex, resumeState.Referer, resumeState.SubtitleURL, resumeState.TimePos))
+				}
+			}
+		case "x", "X":
+			if m.state == StateSystemHealthCheck {
+				_ = config.ClearTorrentCache()
+				return m, nil
+			}
+		case "k", "K":
+			if m.state == StateSystemHealthCheck {
+				nextMode := "prompt"
+				switch config.SkipIntroMode {
+				case "prompt":
+					nextMode = "auto"
+				case "auto":
+					nextMode = "off"
+				case "off":
+					nextMode = "prompt"
+				default:
+					nextMode = "prompt"
+				}
+				_ = config.SaveSkipIntroMode(nextMode)
+				return m, nil
+			}
+		case "r", "R":
+			if m.state == StateSystemHealthCheck {
+				_ = config.SaveAutoResume(!config.AutoResume)
+				return m, nil
 			}
 		case "up":
 			if m.state != StateModeSelect && m.cursor > 0 {
@@ -332,6 +415,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case StateAnimeSelect:
 				if len(m.animeList) > 0 {
 					chosen := m.animeList[m.cursor]
+					m.selectedAnime = chosen
 					m.cursor = 0
 					m.state = StateLoading
 					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
@@ -361,7 +445,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.cursor = 0
 				m.state = StateLoading
-					m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+				m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+				if m.selectedAnime.MalID > 0 {
+					go player.FetchAniSkip(m.selectedAnime.MalID, m.anikotoSelectedEp.Num)
+				}
 				return m, tea.Batch(m.loadingSpinner.Tick, player.RaceAnikotoStreamsCmd(m.anikotoSelectedEp.Token, m.anikotoMode, m.anikotoWatchURL))
 
 			// --- Western TV Logic Flow ---
@@ -432,6 +519,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.state = StateLoadingTorrent
 				m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+				movieTitle := m.currentQuery
+				if m.cursor >= 0 && m.cursor < len(m.cinemetaMovies) && m.cinemetaMovies[m.cursor].Name != "" {
+					movieTitle = m.cinemetaMovies[m.cursor].Name
+				}
+				_ = config.SaveResumeState(config.ResumeState{
+					MediaType: "movie",
+					Title:     movieTitle,
+					Target:    resolvedMagnet,
+				})
 				return m, tea.Batch(tea.ClearScreen, m.loadingSpinner.Tick, player.LaunchPlayer(resolvedMagnet, "", "", ""))
 
 			case StateTVFileSelect:
@@ -442,6 +538,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						targetIndex := fields[0]
 						m.state = StateLoadingTorrent
 						m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+						_ = config.SaveResumeState(config.ResumeState{
+							MediaType:    "tv",
+							Title:        m.selectedShow,
+							Season:       m.selectedSeason,
+							EpisodeTitle: chosenLine,
+							Target:       m.selectedMagnet,
+							FileIndex:    targetIndex,
+						})
 						return m, tea.Batch(tea.ClearScreen, m.loadingSpinner.Tick, player.LaunchPlayer(m.selectedMagnet, targetIndex, "", ""))
 					}
 				}
@@ -579,6 +683,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		proxyURL := player.GlobalProxy.Register(msg.M3u8URL, msg.Referer)
 		m.state = StateLoadingTorrent
 		m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+		animeTitle := m.selectedAnime.Title
+		if animeTitle == "" {
+			animeTitle = m.currentQuery
+		}
+		_ = config.SaveResumeState(config.ResumeState{
+			MediaType:    "anime",
+			Title:        animeTitle,
+			EpisodeTitle: fmt.Sprintf("Episode %s", m.anikotoSelectedEp.Num),
+			Target:       msg.M3u8URL,
+			Referer:      msg.Referer,
+			SubtitleURL:  msg.SubtitleURL,
+		})
 		return m, tea.Batch(tea.ClearScreen, m.loadingSpinner.Tick, player.LaunchPlayer(proxyURL, "", msg.Referer, msg.SubtitleURL))
 
 	case player.AsianShowsMsg:
@@ -604,6 +720,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case player.AsianStreamMsg:
 		m.state = StateLoadingTorrent
 		m.loadingSpinner = spinner.New(spinner.WithSpinner(m.loadingSpinner.Spinner), spinner.WithStyle(m.loadingSpinner.Style))
+		epTitle := ""
+		if m.cursor >= 0 && m.cursor < len(m.asianEpisodes) {
+			epTitle = m.asianEpisodes[m.cursor].Title
+		}
+		_ = config.SaveResumeState(config.ResumeState{
+			MediaType:    "asian",
+			Title:        m.selectedAsianShow.Title,
+			EpisodeTitle: epTitle,
+			Target:       msg.StreamURL,
+			Referer:      msg.Referer,
+			SubtitleURL:  msg.SubtitleURL,
+		})
 		return m, tea.Batch(tea.ClearScreen, m.loadingSpinner.Tick, player.LaunchPlayer(msg.StreamURL, "", msg.Referer, msg.SubtitleURL))
 
 	case prowlarr.TvShowsMsg:

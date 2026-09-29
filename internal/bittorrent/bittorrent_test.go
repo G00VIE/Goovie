@@ -34,9 +34,9 @@ func TestEngineLifecycle(t *testing.T) {
 		t.Error("client should be nil after Close()")
 	}
 
-	// Verify temp directory was cleaned up
-	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
-		t.Errorf("dataDir should be purged after Close(): %s", dataDir)
+	// Verify cache directory persists after Close() so torrent chunks survive app shutdown
+	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
+		t.Errorf("dataDir should persist after Close() for cache continuity: %s", dataDir)
 	}
 }
 

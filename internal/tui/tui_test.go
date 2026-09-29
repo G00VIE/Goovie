@@ -5,8 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"bubble-stream/internal/config"
 	"bubble-stream/internal/prowlarr"
 	"bubble-stream/internal/sysutil"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // simpleRGBA implements color.Color for testing luminance
@@ -724,5 +726,94 @@ func TestSystemHealthMsg_Transitions(t *testing.T) {
 	mod2 := m2.(Model)
 	if mod2.state != StateSystemHealthCheck {
 		t.Errorf("expected StateSystemHealthCheck when missing deps, got: %v", mod2.state)
+	}
+}
+
+func TestStateFrontPage_WithResumeBanner(t *testing.T) {
+	_ = config.SaveResumeState(config.ResumeState{
+		MediaType:    "tv",
+		Title:        "House of the Dragon",
+		Season:       1,
+		Episode:      1,
+		EpisodeTitle: "The Heirs of the Dragon",
+		Target:       "magnet:?xt=urn:btih:mockih",
+		TimePos:      556.0, // 9m 16s
+		Duration:     3600.0,
+	})
+	defer func() { _ = config.ClearResumeState() }()
+
+	m := Model{
+		state:          StateFrontPage,
+		terminalWidth:  100,
+		terminalHeight: 30,
+		health:         sysutil.SystemHealth{HasMPV: true, HasBrowser: true, HasProwlarr: true},
+	}
+	out := m.View()
+	if !strings.Contains(out, "CONTINUE WATCHING") {
+		t.Errorf("expected View to contain CONTINUE WATCHING banner, got: %s", out)
+	}
+	if !strings.Contains(out, "House of the Dragon S01E01") {
+		t.Errorf("expected title in banner, got: %s", out)
+	}
+	if !strings.Contains(out, "09:16") {
+		t.Errorf("expected timestamp in banner, got: %s", out)
+	}
+	if !strings.Contains(out, "Press [ C ] to Resume") {
+		t.Errorf("expected resume key prompt in banner, got: %s", out)
+	}
+}
+
+func TestKeyHandler_ResumePlayback_FrontPage(t *testing.T) {
+	_ = config.SaveResumeState(config.ResumeState{
+		MediaType: "movie",
+		Title:     "Inception",
+		Target:    "magnet:?xt=urn:btih:mockih",
+		TimePos:   120.0,
+	})
+	defer func() { _ = config.ClearResumeState() }()
+
+	m := Model{
+		state:          StateFrontPage,
+		terminalWidth:  100,
+		terminalHeight: 30,
+	}
+
+	mRes, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	mod := mRes.(Model)
+	if mod.state != StateLoadingTorrent {
+		t.Errorf("expected StateLoadingTorrent after pressing c to resume, got: %v", mod.state)
+	}
+	if cmd == nil {
+		t.Fatal("expected non-nil tea.Cmd for launching player")
+	}
+}
+
+func TestKeyHandler_ClearTorrentCache_HealthCheck(t *testing.T) {
+	m := Model{
+		state:          StateSystemHealthCheck,
+		terminalWidth:  100,
+		terminalHeight: 30,
+	}
+
+	mRes, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	mod := mRes.(Model)
+	if mod.state != StateSystemHealthCheck {
+		t.Errorf("expected state to remain StateSystemHealthCheck, got: %v", mod.state)
+	}
+}
+
+func TestRenderSystemHealthCheck_ShowsClearCache(t *testing.T) {
+	m := Model{
+		state:          StateSystemHealthCheck,
+		terminalWidth:  100,
+		terminalHeight: 30,
+		health:         sysutil.SystemHealth{HasMPV: true, HasBrowser: true, HasProwlarr: true},
+	}
+	out := renderSystemHealthCheck(m)
+	if !strings.Contains(out, "Clear Torrent Cache") {
+		t.Errorf("expected Clear Torrent Cache row in health check, got: %s", out)
+	}
+	if !strings.Contains(out, "cached on disk") {
+		t.Errorf("expected cached on disk label in health check, got: %s", out)
 	}
 }

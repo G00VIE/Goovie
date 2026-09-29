@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"bubble-stream/internal/assets"
 	"bubble-stream/internal/bittorrent"
 	"bubble-stream/internal/config"
 	"bubble-stream/internal/sysutil"
@@ -354,22 +357,94 @@ func (p *VibeProxy) serveKey(w http.ResponseWriter, r *http.Request, session *Vi
 	_, _ = w.Write(data)
 }
 
+// EnsureMpvScript extracts the embedded goovie_skip.lua to the user configuration directory if needed.
+func EnsureMpvScript() string {
+	scriptPath := filepath.Join(config.GoovieDir(), "scripts", "goovie_skip.lua")
+	_ = os.MkdirAll(filepath.Dir(scriptPath), 0755)
+
+	data, err := assets.EmbeddedFiles.ReadFile("scripts/goovie_skip.lua")
+	if err == nil {
+		_ = os.WriteFile(scriptPath, data, 0644)
+		return scriptPath
+	}
+	return ""
+}
+
+// BuildMpvArgs constructs standard streaming arguments for MPV with caching, anti-stutter flags, and skip script.
+func BuildMpvArgs(target string, cacheMB int, subtitleURL string, referer string) []string {
+	return BuildMpvArgsWithResume(target, cacheMB, subtitleURL, referer, 0)
+}
+
+// BuildMpvArgsWithResume constructs MPV streaming arguments including optional start offset for resuming.
+func BuildMpvArgsWithResume(target string, cacheMB int, subtitleURL string, referer string, startPos float64) []string {
+	if cacheMB <= 0 {
+		cacheMB = config.GetDownloadCacheMB()
+	}
+	backBytes := cacheMB / 4
+	if backBytes < 32 {
+		backBytes = 32
+	}
+
+	args := []string{
+		fmt.Sprintf("--demuxer-max-bytes=%dMiB", cacheMB),
+		fmt.Sprintf("--demuxer-max-back-bytes=%dMiB", backBytes),
+		"--cache=yes",
+		"--cache-secs=3600",
+		"--cache-pause=yes",
+		"--cache-pause-wait=15",
+		"--cache-pause-initial=yes",
+		"--save-position-on-quit=yes",
+		"--sub-auto=fuzzy",
+		"--demuxer-mkv-subtitle-preroll=yes",
+	}
+
+	if startPos > 0 {
+		args = append(args, fmt.Sprintf("--start=%.2f", startPos))
+	}
+
+	if scriptPath := EnsureMpvScript(); scriptPath != "" {
+		args = append(args, "--script="+scriptPath)
+		mode := config.SkipIntroMode
+		if mode == "" {
+			mode = "prompt"
+		}
+		posFile := filepath.Join(config.GoovieDir(), "last_pos.json")
+		scriptOpts := fmt.Sprintf("goovie-skip_mode=%s,goovie-pos_file=%s", mode, posFile)
+		if ActiveSkipTimestamps.OpStart >= 0 && ActiveSkipTimestamps.OpEnd > ActiveSkipTimestamps.OpStart {
+			scriptOpts += fmt.Sprintf(",goovie-op_start=%.2f,goovie-op_end=%.2f", ActiveSkipTimestamps.OpStart, ActiveSkipTimestamps.OpEnd)
+		}
+		if ActiveSkipTimestamps.EdStart >= 0 && ActiveSkipTimestamps.EdEnd > ActiveSkipTimestamps.EdStart {
+			scriptOpts += fmt.Sprintf(",goovie-ed_start=%.2f,goovie-ed_end=%.2f", ActiveSkipTimestamps.EdStart, ActiveSkipTimestamps.EdEnd)
+		}
+		args = append(args, "--script-opts="+scriptOpts)
+	}
+
+	if referer != "" {
+		args = append(args, "--referrer="+referer)
+	}
+	if subtitleURL != "" {
+		args = append(args, "--sub-file="+subtitleURL)
+	}
+	args = append(args, target)
+	return args
+}
+
 func LaunchPlayer(target string, fileIndex string, referer string, subtitleURL string) tea.Cmd {
+	return LaunchPlayerWithResume(target, fileIndex, referer, subtitleURL, 0)
+}
+
+// LaunchPlayerWithResume launches the media player with an optional starting position offset for instant continuation.
+func LaunchPlayerWithResume(target string, fileIndex string, referer string, subtitleURL string, startPos float64) tea.Cmd {
 	mpvBin := "mpv"
 	if p := sysutil.FindMPVExecutable(); p != "" {
 		mpvBin = p
 	}
 
+	cacheMB := config.GetDownloadCacheMB()
+
 	if strings.HasPrefix(target, "http") {
-		// Anime path uses pure mpv with optional referer and subtitle
-		var args []string
-		if referer != "" {
-			args = append(args, "--referrer="+referer)
-		}
-		if subtitleURL != "" {
-			args = append(args, "--sub-file="+subtitleURL)
-		}
-		args = append(args, target)
+		// Anime/direct path uses pure mpv with caching and skip script
+		args := BuildMpvArgsWithResume(target, cacheMB, subtitleURL, referer, startPos)
 		c := exec.Command(mpvBin, args...)
 		c.Stdout = io.Discard
 		c.Stderr = io.Discard
@@ -400,7 +475,8 @@ func LaunchPlayer(target string, fileIndex string, referer string, subtitleURL s
 		}
 		defer session.Close()
 
-		c := exec.Command(mpvBin, session.StreamURL)
+		args := BuildMpvArgsWithResume(session.StreamURL, cacheMB, subtitleURL, referer, startPos)
+		c := exec.Command(mpvBin, args...)
 		c.Stdout = io.Discard
 		c.Stderr = io.Discard
 		err = c.Run()

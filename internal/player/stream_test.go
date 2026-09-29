@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -552,6 +553,62 @@ func TestLaunchPlayer_ReturnsCmd(t *testing.T) {
 	// Do NOT call cmd() here — it would attempt to spawn mpv, which is slow
 	// and not guaranteed to be installed in CI. The function's correctness is
 	// established by the non-nil return and the integration of its caller.
+}
+
+func TestBuildMpvArgs_CachingAndFlags(t *testing.T) {
+	args := BuildMpvArgs("http://example.com/stream.m3u8", 512, "http://sub.com/sub.srt", "http://ref.com")
+	joined := strings.Join(args, " ")
+
+	if !strings.Contains(joined, "--demuxer-max-bytes=512MiB") {
+		t.Errorf("expected 512MiB demuxer max bytes, got args: %s", joined)
+	}
+	if !strings.Contains(joined, "--cache-pause=yes") {
+		t.Errorf("expected --cache-pause=yes, got: %s", joined)
+	}
+	if !strings.Contains(joined, "--cache-pause-wait=15") {
+		t.Errorf("expected --cache-pause-wait=15, got: %s", joined)
+	}
+	if !strings.Contains(joined, "--save-position-on-quit=yes") {
+		t.Errorf("expected --save-position-on-quit=yes, got: %s", joined)
+	}
+	if !strings.Contains(joined, "--sub-file=http://sub.com/sub.srt") {
+		t.Errorf("expected subtitle flag, got: %s", joined)
+	}
+	if !strings.Contains(joined, "--referrer=http://ref.com") {
+		t.Errorf("expected referrer flag, got: %s", joined)
+	}
+	if !strings.Contains(joined, "--script=") {
+		t.Errorf("expected --script flag, got: %s", joined)
+	}
+}
+
+func TestBuildMpvArgsWithResume_IncludesStartAndPosFile(t *testing.T) {
+	args := BuildMpvArgsWithResume("http://example.com/stream.m3u8", 256, "", "", 1234.56)
+	joined := strings.Join(args, " ")
+
+	if !strings.Contains(joined, "--start=1234.56") {
+		t.Errorf("expected --start=1234.56, got args: %s", joined)
+	}
+	if !strings.Contains(joined, "goovie-pos_file=") {
+		t.Errorf("expected goovie-pos_file in script-opts, got args: %s", joined)
+	}
+}
+
+func TestLaunchPlayerWithResume_ReturnsCmd(t *testing.T) {
+	cmd := LaunchPlayerWithResume("http://example.com/stream.m3u8", "", "http://ref.com", "", 120.0)
+	if cmd == nil {
+		t.Fatal("LaunchPlayerWithResume should return a non-nil tea.Cmd")
+	}
+}
+
+func TestEnsureMpvScript_CreatesFile(t *testing.T) {
+	path := EnsureMpvScript()
+	if path == "" {
+		t.Fatal("EnsureMpvScript returned empty path")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected script file to exist at %s: %v", path, err)
+	}
 }
 
 // --- Message type creation tests ---

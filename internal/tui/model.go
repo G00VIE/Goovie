@@ -139,6 +139,7 @@ type Model struct {
 	finishCounter  int
 
 	animeList         []prowlarr.JikanAnime
+	selectedAnime     prowlarr.JikanAnime
 	anikotoShows      []player.ShowResult
 	anikotoEpisodes   []player.EpisodeResult
 

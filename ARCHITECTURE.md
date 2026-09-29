@@ -1,56 +1,61 @@
 # Goovie Architecture
 
-This document describes the architectural layout and data flow of the Goovie CLI application.
+This document describes the architectural layout, modules, and data flow of the Goovie terminal streaming suite.
 
 ## Overview
-Goovie is a cross-platform CLI tool built in Go that searches for torrents using Prowlarr and streams them instantly using `webtorrent` and `mpv`. It features a rich, responsive terminal user interface (TUI) powered by the `charmbracelet/bubbletea` framework.
+Goovie is a 100% pure Go cross-platform terminal streaming suite that searches for media using Prowlarr and web scrapers, streams torrents sequentially with an embedded high-throughput BitTorrent client, and plays media seamlessly through `mpv`. It features a rich, responsive terminal user interface (TUI) powered by Charm's `bubbletea` framework.
 
 ## Project Structure (Standard Go Layout)
 
 ```
 goovie/
-├── cmd/goovie/main.go      # Application entry point
+├── cmd/
+│   ├── goovie/main.go          # Application entry point & lifecycle management
+│   └── test_torrent/main.go    # Torrent engine diagnostic utility
 ├── internal/
-│   ├── config/             # Configuration management (env vars)
-│   ├── prowlarr/           # API interactions and data types for Prowlarr
-│   ├── tui/                # Bubble Tea UI components and state machine
-│   └── player/             # Streaming logic (Webtorrent & MPV execution)
+│   ├── assets/                 # Embedded logos, ANSI fonts, and MPV Lua scripts
+│   │   └── scripts/            # goovie_skip.lua (Netflix skip intro/outro & HUD)
+│   ├── bittorrent/             # Pure Go BitTorrent engine (anacrolix/torrent)
+│   ├── config/                 # App configuration, cache directory & resume state
+│   ├── player/                 # MPV process control, AniSkip API, HLS VibeProxy
+│   ├── prowlarr/               # Prowlarr, TVMaze, Cinemeta, and Jikan clients
+│   ├── sysutil/                # Health checks, 1-click installer & cleanup
+│   └── tui/                    # Bubble Tea TUI state machine, models & views
 ```
 
 ## Module Breakdown
 
 ### 1. Entry Point (`cmd/goovie/main.go`)
-- **Responsibility:** Wires the components together.
-- **Flow:** 
-  1. Invokes the Bubble Tea TUI model via `tui.NewModel()`.
-  2. The TUI initializes the configuration via `config.InitConfig()`.
-  3. Runs the TUI loop.
-  4. Upon TUI exit, handles the selected stream based on the selected mode (Movie/Show/Anime).
+- **Lifecycle Management**: Initializes the local HLS `VibeProxy`, loads embedded ANSI fonts and logo art, and mounts the Bubble Tea program.
+- **Graceful Shutdown**: Intercepts OS signals (`SIGINT`, `SIGTERM`) to cleanly terminate active streaming engines, shut down background proxies, enforce the 10 GB torrent cache quota (`config.PruneTorrentCache(10, "")`), and unlink scratch temp files via `sysutil.PurgeAllTempData()`.
 
-### 2. Configuration (`internal/config`)
-- **Responsibility:** Setup, persistence, and priority-based configuration ingestion.
-- **Flow (`InitConfig` priority list):** 
-  1. **Environment Variables:** Checks for `PROWLARR_URL` and `PROWLARR_API_KEY`.
-  2. **Saved Config (`LoadConfig`):** Reads the API key from `~/.goovie/config.json`.
-  3. **Auto-Detect (`AutoDetectAPIKey`):** Parses the local Prowlarr `config.xml` for an API key.
+### 2. Configuration & State Persistence (`internal/config`)
+- **AppConfig**: Manages Prowlarr/FlareSolverr credentials, minimum seeders, download cache size (150 MB, 256 MB default, 512 MB, 1024 MB), skip intro modes (`prompt`, `auto`, `off`), and auto-resume toggles.
+- **Persistent Torrent Cache**: Provides `TorrentCacheDir()` (`~/.goovie/torrent_cache/`), storing downloaded torrent chunks across application restarts and system reboots.
+- **Progressive Cleanup**: Implements `PruneTorrentCache(maxSizeGB, keepActiveName)` to enforce LRU cache quotas without disturbing currently watched media.
+- **Watch History & Resume State**: Persists watched episodes to `~/.goovie/watched.json` and active resume session data to `~/.goovie/resume.json`.
 
-### 3. TUI State Machine (`internal/tui`)
-Uses the Elm architecture via Bubble Tea (Model, Update, View).
-- **States:**
-  - `StateSearchInput`: Initial state. User inputs the query.
-  - `StateLoading`: Waiting for indexer discovery and search completion. Shows a spinner.
-  - `StateList`: Displays results sorted by seeders.
-- **Concurrency:** TUI commands send asynchronous HTTP requests to the Prowlarr API using Bubble Tea's `tea.Cmd`.
+### 3. Pure Go BitTorrent Streaming Engine (`internal/bittorrent`)
+- **Zero-Dependency Torrent Engine**: Built directly on `anacrolix/torrent` with DHT, PEX, and multi-tracker tier scraping.
+- **Persistent Piece Completion**: Uses SQLite piece completion (`storage.NewDefaultPieceCompletionForDir`) to instantly verify existing disk chunks on restart with zero re-downloading.
+- **Local HTTP Range Server**: Creates an ephemeral HTTP byte-range server (`127.0.0.1:<port>/stream`) with configurable dynamic readahead (`reader.SetReadahead`) matching the user's cache buffer settings.
+- **Session Lifecycle**: On stream close, drops the torrent from the active swarm while preserving downloaded chunks in the persistent cache.
 
-### 4. Search and Metadata Client (`internal/prowlarr`)
-- **Responsibility:** Interacts with Prowlarr, TVMaze, Cinemeta, and Jikan APIs for metadata and torrents.
-- **Flow:**
-  1. Fetches metadata depending on media type (`FetchCinemetaMovies`, `FetchTVShows`, `FetchAnime`).
-  2. `FetchIndexers`: Retrieves active indexers using `config.ProwlarrURL` and `config.ProwlarrAPIKey`.
-  3. `SearchSingleIndexer`: Searches for torrents with specific indexers.
-  4. `ResolveProxyLink`: Parses `InfoHash`, `magnetUrl` or resolves `downloadUrl` into a valid magnet URI.
+### 4. Player & Stream Integration (`internal/player`)
+- **MPV Execution**: Launches `mpv` with anti-stutter flags (`--demuxer-max-bytes`, `--demuxer-max-back-bytes`, `--cache-pause=yes`, `--cache-pause-wait=15`, `--save-position-on-quit=yes`, and `--start=<seconds>`).
+- **AniSkip Client (`aniskip.go`)**: Queries the AniSkip API (`https://api.aniskip.com/v2/skip-times`) for opening and ending timestamps.
+- **Embedded Skip Script (`goovie_skip.lua`)**: Embedded via `embed.FS` and extracted to `~/.goovie/scripts/goovie_skip.lua`. Provides Netflix-style on-screen skip buttons (`[S]`), smart +85s fallback jump with instant undo (`[U]`), live buffering HUD, and real-time playback position sync (`~/.goovie/last_pos.json`).
+- **Local HLS Proxy (`VibeProxy`)**: Intercepts, decrypts, and proxies anime and Asian drama m3u8 playlists and MPEG-TS segments on localhost.
 
-### 5. Player logic (`internal/player`)
-- **Responsibility:** Handles streaming from torrents, direct MP4/HLS streams (Anime/Asian Media), and launches external players.
-- **Anime / Asian Media Scrapers:** Custom logic scraping domains (e.g. `anikototv.to`, `kisskh.do`) for direct streaming links, using local HLS proxy `VibeProxy` if needed.
-- **Execution:** Spawns child processes depending on the OS (e.g., `LaunchPlayer` with `mpv` or `webtorrent`).
+### 5. TUI State Machine (`internal/tui`)
+- **Elm Architecture**: Implements Bubble Tea's `Init`, `Update`, and `View` pattern.
+- **Key States**:
+  - `StateFrontPage`: Displays ASCII branding and the **▶ CONTINUE WATCHING** banner for 1-key instant resumption (`[ C ]`).
+  - `StateModeSelect`: Interactive selection between Movies, TV Shows, and Anime.
+  - `StateSystemHealthCheck`: 1-Click Auto-Installer and interactive toggles for download cache buffers, skip intro modes, and torrent cache clearing (`[ x ]`).
+  - `StateTVFileSelect` / `StateAnikotoEpSelect`: Episode navigation featuring watched badges (`[✓]`) and automatic cursor advance.
+  - `StateList`: Search results highlighting bandwidth-efficient releases (`x265`, `HEVC`, `PSA`) with `⚡` icons.
+
+### 6. System Utilities & Health Check (`internal/sysutil`)
+- **Health Check (`healthcheck.go`)**: Probes local environment for MPV, Prowlarr, FlareSolverr, and Edge/Chrome browser availability.
+- **1-Click Auto-Installer (`installer.go`)**: Autonomous package installation via `winget`, pre-seeding Prowlarr authentication configurations to bypass login wizards and inject top indexers automatically.

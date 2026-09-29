@@ -15,10 +15,16 @@ Zero Node.js. Zero WebTorrent CLI bloat. Pure compiled Go power. 🏎️💨
 ## ✨ Features That Slap
 
 - 🚀 **Pure Go BitTorrent Engine**: Built-in streaming torrent engine (`anacrolix/torrent`) compiled directly into the binary. Instant sequential piece streaming, multi-tracker announcements, and aggressive unchoking for max swarm speed.
+- ⏩ **Universal Netflix-Like Skip Intro / Outro**: On-screen prompt `[ S ] Skip Intro` (or auto-skip) with multi-tier intelligence: AniSkip API timestamps, MKV/MP4 embedded chapter parsing, unnamed chapter heuristics, and smart +85s fallback jump with instant undo (`[ U ]` / `[ Backspace ]`). Zero crashes, even on un-tagged files.
+- ⚡ **Configurable Download Cache Buffer**: Choose your buffer cushion in Settings: **150 MB** (~9m buffer), **256 MB** (~16m default), **512 MB** (~32m buffer), or **1024 MB** (full 1hr+ episode buffer). BitTorrent readahead and MPV demuxer are 100% synchronized for uninterrupted playback.
+- 🛡️ **Slow-Connection Anti-Stutter Suite**: Designed for slow or unstable internet. MPV auto-pauses on buffer underrun with a 15-second recharge window (`--cache-pause-wait=15`) and displays a live buffering HUD (`⏳ Buffering Stream... 12.4 MB / 15s cached`) instead of audio-glitching micro-freezes.
+- 💾 **Persistent Torrent Cache across Shutdowns/Crashes**: Accidental terminal close or sudden laptop shutdown? No sweat. Downloaded chunks are safely preserved in `~/.goovie/torrent_cache/`. Re-opening the episode resumes instantly without re-downloading. Progressive LRU pruning automatically maintains a 10 GB quota, and you can clear the cache anytime with `[ x ]`.
+- ⏯️ **"Pick Up Where You Left Off" (Continue Watching)**: Real-time playback position tracking (synced every 5 seconds, on pause, and on shutdown). The front page prominently displays your last-watched show with a 1-key instant resume shortcut (`[ c ]`) straight to the exact second.
+- ✓ **Watched History & Binge Progression**: Watched checkmarks `[✓]` in episode lists and auto-advance cursor to the next episode upon completion.
 - 🩺 **Startup Health Check & 1-Click Auto-Installer**: Fresh PC? No problem. Goovie checks your setup on boot. Press **`[ 1 ]`** to auto-install MPV, Prowlarr, bypass browser login wizards, and auto-inject top indexers automatically!
 - 🌸 **Zero-Setup Anime**: Powered by pure Go scrapers (AniList, Kitsu, and Anikoto). Works right out of the box with **zero** external indexers or torrent clients needed.
 - 🫰 **Asian & K-Drama Streaming**: Embedded headless Rod engine (runs right on your built-in Edge or Chrome) to scrape and stream drama episodes seamlessly.
-- 🧹 **Zero Open Ports & Permanent Purge**: When you exit or finish an episode, all streaming servers shut down tight, and all temp torrent data is permanently unlinked from your disk (bypassing the Recycle Bin completely).
+- 🧹 **Zero Open Ports & Clean Shutdown**: When you exit or finish an episode, all streaming servers shut down tight, listeners are closed, and temporary scratch data is cleared cleanly.
 - 🎨 **Aesthetic Bubble Tea TUI**: Retro ASCII banners, live spinners, dynamic camera views, and custom art for every genre.
 
 ---
@@ -72,15 +78,31 @@ Zero Node.js. Zero WebTorrent CLI bloat. Pure compiled Go power. 🏎️💨
 
 ## 🕹️ Controls & Navigation
 
+### Terminal TUI Controls
+
 | Keybinding | Action |
 | :--- | :--- |
 | `←` / `→` | Switch Genres (**Movies**, **TV Shows**, **Anime**) |
 | `↑` / `↓` | Navigate menus and search results |
 | `[Enter]` | Confirm selection / Play stream |
-| `[s]` | Open **System Setup & Health** anytime from menus |
-| `0` - `9` | Instant jump (type `12` in season menu to jump straight to Episode 12) |
+| `[c]` / `[C]` | **Resume Playback / Continue Watching** (Front Page & Mode Select) • Cycle download cache buffer (in Setup & Health) |
+| `[s]` | Open **System Setup & Health** dashboard anytime from menus |
+| `[k]` / `[K]` | Toggle **Skip Intro Mode** (`Netflix Prompt` ➔ `Auto-Skip` ➔ `Off`) in Setup & Health |
+| `[r]` / `[R]` | Toggle **Auto-Resume** in Setup & Health |
+| `[x]` / `[X]` | **Clear Persistent Torrent Cache** in Setup & Health |
+| `0` - `9` | Instant episode jump (type `12` in season menu to jump straight to Episode 12) |
 | `[Backspace]` | Go back to the previous screen |
-| `[Esc]` / `[q]` | Exit cleanly (auto-purges all temp dumps and frees ports) |
+| `[Esc]` / `[q]` | Exit cleanly (closes active ports and listeners) |
+
+### In-Player (MPV) Video Controls
+
+| Keybinding | Action |
+| :--- | :--- |
+| `[S]` / `[s]` | **Skip Intro / Outro** (or trigger smart +85s jump if metadata is absent) |
+| `[U]` / `[Backspace]` | **Instant Undo** (reverts jump back to exact previous timestamp) |
+| `[I]` / `[i]` | Toggle **Live Stream Info & Cache HUD** (buffered megabytes, readahead time, positions) |
+| `[Space]` | Pause / Resume playback (triggers live buffering overlay during cache underrun) |
+| `[q]` | Quit player (automatically saves exact watch timestamp for instant continuation) |
 
 ---
 

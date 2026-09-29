@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"path/filepath"
 	"sync"
 	"time"
 
-	"bubble-stream/internal/sysutil"
+	"bubble-stream/internal/config"
 	"github.com/anacrolix/torrent"
 )
 
@@ -26,7 +25,7 @@ type StreamSession struct {
 }
 
 // Close shuts down the local HTTP streaming server, closes ports, and drops the torrent from the engine,
-// wiping its downloaded chunks immediately from disk.
+// preserving downloaded chunks in persistent cache.
 func (s *StreamSession) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -45,11 +44,7 @@ func (s *StreamSession) Close() {
 		s.listener = nil
 	}
 	if s.Torrent != nil {
-		info := s.Torrent.Info()
 		s.Torrent.Drop()
-		if info != nil && s.engineDataDir != "" {
-			sysutil.RemoveTempDir(filepath.Join(s.engineDataDir, info.Name))
-		}
 		s.Torrent = nil
 	}
 }
@@ -119,10 +114,11 @@ func (e *Engine) StartStreamServer(ctx context.Context, magnet string, fileIndex
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
-		// Create an independent reader with aggressive readahead per HTTP connection
+		// Create an independent reader with dynamic readahead per HTTP connection
 		reader := targetFile.NewReader()
-		reader.SetReadahead(64 * 1024 * 1024) // 64MB aggressive readahead
-		reader.SetResponsive()                 // Immediate streaming of chunks without waiting for full piece verification
+		cacheBytes := int64(config.GetDownloadCacheMB()) * 1024 * 1024
+		reader.SetReadahead(cacheBytes)
+		reader.SetResponsive() // Immediate streaming of chunks without waiting for full piece verification
 		defer reader.Close()
 
 		w.Header().Set("Content-Type", "video/octet-stream")

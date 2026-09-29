@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"bubble-stream/internal/config"
-	"bubble-stream/internal/sysutil"
 	g "github.com/anacrolix/generics"
 	analog "github.com/anacrolix/log"
 	"github.com/anacrolix/torrent"
@@ -45,19 +44,23 @@ type Engine struct {
 	mu           sync.Mutex
 }
 
-// NewEngine initializes a new high-throughput torrent engine with DHT, PEX, and multi-tracker support.
+// NewEngine initializes a new high-throughput torrent engine with persistent cache, DHT, PEX, and multi-tracker support.
 func NewEngine() (*Engine, error) {
-	tempDir, err := os.MkdirTemp("", "goovie_torrent_engine_*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create engine temp dir: %w", err)
+	return NewEngineWithDir(config.TorrentCacheDir())
+}
+
+// NewEngineWithDir initializes a torrent engine using a specific base directory.
+func NewEngineWithDir(dir string) (*Engine, error) {
+	if dir == "" {
+		dir = config.TorrentCacheDir()
 	}
-	sysutil.RegisterTempDir(tempDir)
+	_ = os.MkdirAll(dir, 0755)
 
 	analog.DefaultHandler = analog.DiscardHandler
 	analog.Default.SetHandlers(analog.DiscardHandler)
 
 	cfg := torrent.NewDefaultClientConfig()
-	cfg.DataDir = tempDir
+	cfg.DataDir = dir
 	cfg.ListenPort = 0 // Ephemeral port to prevent port conflicts and ensure clean close
 
 	discardLogger := analog.NewLogger()
@@ -65,10 +68,15 @@ func NewEngine() (*Engine, error) {
 	cfg.Logger = discardLogger
 	cfg.Slogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
+	pc, err := storage.NewDefaultPieceCompletionForDir(dir)
+	if err != nil {
+		pc = storage.NewMapPieceCompletion()
+	}
+
 	fileStore := storage.NewFileOpts(storage.NewFileClientOpts{
-		ClientBaseDir:   tempDir,
+		ClientBaseDir:   dir,
 		UsePartFiles:    g.Some(false),
-		PieceCompletion: storage.NewMapPieceCompletion(),
+		PieceCompletion: pc,
 	})
 	cfg.DefaultStorage = fileStore
 
@@ -94,14 +102,13 @@ func NewEngine() (*Engine, error) {
 	cl, err := torrent.NewClient(cfg)
 	if err != nil {
 		_ = fileStore.Close()
-		sysutil.RemoveTempDir(tempDir)
 		return nil, fmt.Errorf("failed to initialize torrent client: %w", err)
 	}
 
 	return &Engine{
 		client:       cl,
 		defaultStore: fileStore,
-		dataDir:      tempDir,
+		dataDir:      dir,
 	}, nil
 }
 
@@ -119,7 +126,7 @@ func (e *Engine) Client() *torrent.Client {
 	return e.client
 }
 
-// Close gracefully terminates all torrent activity and purges engine data.
+// Close gracefully terminates all torrent activity while preserving cached files.
 func (e *Engine) Close() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -131,10 +138,7 @@ func (e *Engine) Close() {
 		_ = e.defaultStore.Close()
 		e.defaultStore = nil
 	}
-	if e.dataDir != "" {
-		sysutil.RemoveTempDir(e.dataDir)
-		e.dataDir = ""
-	}
+	e.dataDir = ""
 }
 
 var (

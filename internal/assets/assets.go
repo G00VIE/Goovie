@@ -4,5 +4,5 @@ import (
 	"embed"
 )
 
-//go:embed logos/* font/*
+//go:embed logos/* font/* scripts/*
 var EmbeddedFiles embed.FS

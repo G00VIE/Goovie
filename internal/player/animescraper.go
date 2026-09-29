@@ -50,6 +50,14 @@ type GetSourcesResponse struct {
 		File string `json:"file"`
 	} `json:"sources"`
 	Enc    string `json:"enc"`
+	Intro  struct {
+		Start int `json:"start"`
+		End   int `json:"end"`
+	} `json:"intro"`
+	Outro  struct {
+		Start int `json:"start"`
+		End   int `json:"end"`
+	} `json:"outro"`
 	Tracks []struct {
 		File  string `json:"file"`
 		Label string `json:"label"`
@@ -338,6 +346,15 @@ func resolveStream(linkID string, watchURL string, mode string) (AnikotoStreamMs
 	masterBytes, err := fetchHTTPWithReferer(client, fileURL, referrerBase)
 	if err != nil || len(masterBytes) == 0 {
 		return AnikotoStreamMsg{}, fmt.Errorf("provider stream master playlist unreachable: %v", err)
+	}
+
+	if finalRes.Intro.End > finalRes.Intro.Start {
+		ActiveSkipTimestamps.OpStart = float64(finalRes.Intro.Start)
+		ActiveSkipTimestamps.OpEnd = float64(finalRes.Intro.End)
+	}
+	if finalRes.Outro.End > finalRes.Outro.Start {
+		ActiveSkipTimestamps.EdStart = float64(finalRes.Outro.Start)
+		ActiveSkipTimestamps.EdEnd = float64(finalRes.Outro.End)
 	}
 
 	return AnikotoStreamMsg{M3u8URL: fileURL, Referer: referrerBase, SubtitleURL: subtitleURL}, nil

@@ -392,3 +392,111 @@ func TestSaveFlareSolverrURL(t *testing.T) {
 	_ = os.Remove(AppConfigPath())
 }
 
+func TestDownloadCacheMB_DefaultAndSave(t *testing.T) {
+	if GetDownloadCacheMB() <= 0 {
+		t.Errorf("expected positive default cache MB, got %d", GetDownloadCacheMB())
+	}
+	if err := SaveDownloadCacheMB(512); err != nil {
+		t.Fatalf("SaveDownloadCacheMB failed: %v", err)
+	}
+	if GetDownloadCacheMB() != 512 {
+		t.Errorf("expected 512 MB, got %d", GetDownloadCacheMB())
+	}
+	cfg, err := ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig failed: %v", err)
+	}
+	if cfg.DownloadCacheMB != 512 {
+		t.Errorf("expected 512 in config, got %d", cfg.DownloadCacheMB)
+	}
+	_ = os.Remove(AppConfigPath())
+}
+
+func TestSkipIntroMode_Save(t *testing.T) {
+	if err := SaveSkipIntroMode("auto"); err != nil {
+		t.Fatalf("SaveSkipIntroMode failed: %v", err)
+	}
+	if SkipIntroMode != "auto" {
+		t.Errorf("expected 'auto', got %q", SkipIntroMode)
+	}
+	_ = os.Remove(AppConfigPath())
+}
+
+func TestAutoResume_Save(t *testing.T) {
+	if err := SaveAutoResume(false); err != nil {
+		t.Fatalf("SaveAutoResume failed: %v", err)
+	}
+	if AutoResume != false {
+		t.Errorf("expected false, got %v", AutoResume)
+	}
+	_ = os.Remove(AppConfigPath())
+}
+
+func TestWatchedHistory_MarkAndCheck(t *testing.T) {
+	testKey := "House of the Dragon:S01E01"
+	if IsEpisodeWatched(testKey) {
+		t.Errorf("expected episode not watched initially")
+	}
+	if err := MarkEpisodeWatched(testKey); err != nil {
+		t.Fatalf("MarkEpisodeWatched failed: %v", err)
+	}
+	if !IsEpisodeWatched(testKey) {
+		t.Errorf("expected episode to be marked watched")
+	}
+	_ = os.Remove(WatchedHistoryPath())
+}
+
+func TestResumeState_SaveLoadClear(t *testing.T) {
+	state := ResumeState{
+		MediaType:    "tv",
+		Title:        "House of the Dragon",
+		Season:       1,
+		Episode:      3,
+		EpisodeTitle: "The Second of His Name",
+		Target:       "magnet:?xt=urn:btih:mockhash",
+		TimePos:      1694.5,
+		Duration:     3600.0,
+	}
+
+	if err := SaveResumeState(state); err != nil {
+		t.Fatalf("SaveResumeState failed: %v", err)
+	}
+
+	loaded, err := LoadResumeState()
+	if err != nil {
+		t.Fatalf("LoadResumeState failed: %v", err)
+	}
+
+	if loaded.Title != state.Title || loaded.Season != 1 || loaded.Episode != 3 {
+		t.Errorf("loaded state mismatch: %+v", loaded)
+	}
+
+	if err := ClearResumeState(); err != nil {
+		t.Fatalf("ClearResumeState failed: %v", err)
+	}
+
+	if _, err := LoadResumeState(); err == nil {
+		t.Errorf("expected error after clearing resume state")
+	}
+}
+
+func TestTorrentCache_DirectoryAndPrune(t *testing.T) {
+	dir := TorrentCacheDir()
+	if dir == "" {
+		t.Fatal("TorrentCacheDir returned empty")
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		t.Fatalf("expected torrent cache dir to exist: %v", err)
+	}
+
+	size, err := GetTorrentCacheSize()
+	if err != nil || size < 0 {
+		t.Errorf("GetTorrentCacheSize failed: %v, %d", err, size)
+	}
+
+	if err := PruneTorrentCache(10, ""); err != nil {
+		t.Errorf("PruneTorrentCache failed: %v", err)
+	}
+}
+
+
